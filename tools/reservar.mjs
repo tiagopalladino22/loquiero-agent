@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Herramienta del bot TU GANGA: reserva un producto por su codigo.
+// Herramienta del bot LO QUIERO: reserva un producto por su codigo.
 // La llama el LLM del bot (Hermes) cuando un cliente dice "LO QUIERO <codigo>".
 //
 //   node tools/reservar.mjs '{"codigo":"A01","wa":"5491122334455"}'
@@ -7,17 +7,17 @@
 // Llama al RPC atomico reservar_producto (publicado -> reservado, solo el primero gana)
 // e imprime JSON. El bot lee ese JSON y responde segun el resultado.
 //
-// Env (en el VPS): TUGANGA_SUPABASE_URL + TUGANGA_SUPABASE_SERVICE_ROLE_KEY
+// Env (en el VPS): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 //   (fallback a SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).
 
 const url = (
-  process.env.TUGANGA_SUPABASE_URL ||
+  process.env.LOQUIERO_SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.SUPABASE_URL ||
   ""
 ).replace(/\/+$/, "");
 const key =
-  process.env.TUGANGA_SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.LOQUIERO_SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   "";
 
@@ -26,7 +26,7 @@ function out(obj) {
 }
 
 if (!url || !key) {
-  out({ ok: false, reason: "config", error: "Faltan TUGANGA_SUPABASE_URL / _SERVICE_ROLE_KEY" });
+  out({ ok: false, reason: "config", error: "Faltan LOQUIERO_SUPABASE_URL / _SERVICE_ROLE_KEY" });
   process.exit(0);
 }
 

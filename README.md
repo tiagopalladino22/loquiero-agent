@@ -1,6 +1,6 @@
-# tuganga-agent — bot WhatsApp de TU GANGA (v1)
+# loquiero-agent — bot WhatsApp de LO QUIERO (v1)
 
-Bot Hermes+GPT dedicado a TU GANGA, **separado de Rumpel** (mismo patron que
+Bot Hermes+GPT dedicado a LO QUIERO, **separado de Rumpel** (mismo patron que
 `horsego-agent`: "un brain por negocio"). v1: toma "LO QUIERO A01", reserva el producto
 en el ops center, ofrece punto de entrega, pasa el CVU y pide el comprobante.
 
@@ -12,7 +12,7 @@ en el ops center, ofrece punto de entrega, pasa el CVU y pide el comprobante.
 - `sync.sh` — pull del repo + reinicia el gateway (aplica cambios de prompt/adapter).
 - `.env.example` — env del agente.
 
-## En la base (ops center de TU GANGA) — YA aplicado
+## En la base (ops center de LO QUIERO) — YA aplicado
 - Estado `reservado` en el enum (entre `publicado` y `vendido`), + columnas
   `reservado_at` / `reservado_por`.
 - RPC `reservar_producto(p_codigo, p_wa)`: si el producto esta `publicado` lo pasa a
@@ -22,23 +22,23 @@ en el ops center, ofrece punto de entrega, pasa el CVU y pide el comprobante.
 ## Antes de deployar: completar placeholders
 En `prompts/PLATFORM_HINT.md`:
 - `{{PUNTO_1}}` / `{{PUNTO_2}}` -> los puntos de entrega reales.
-- `{{CVU}}` -> el CVU/alias real de TU GANGA.
+- `{{CVU}}` -> el CVU/alias real de LO QUIERO.
 
 ## Deploy en el VPS (como HorseGo, pero su propio gateway)
 El bot corre en **su propio gateway** (puerto propio, ej `8649`) con **su propio webhook
 de Kapso**, para no chocar con Rumpel ni HorseGo.
 
-1. Clonar este repo en el VPS, ej `/opt/data/tuganga-agent`.
+1. Clonar este repo en el VPS, ej `/opt/data/loquiero-agent`.
 2. Env del agente (ver `.env.example`): `KAPSO_*` (con `KAPSO_PORT=8649` y el
-   `KAPSO_PHONE_NUMBER_ID` del numero de TU GANGA), `TUGANGA_SUPABASE_URL` +
-   `TUGANGA_SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY` + `TUGANGA_MODEL`.
+   `KAPSO_PHONE_NUMBER_ID` del numero de LO QUIERO), `LOQUIERO_SUPABASE_URL` +
+   `LOQUIERO_SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY` + `LOQUIERO_MODEL`.
 3. **Persona (la unica pieza de codigo a wirear, igual que hiciste en HorseGo):** en el
    adapter de Kapso de ESTE gateway, agregar una funcion que lea la persona de este repo
    y usarla como `platform_hint`. Es el mismo patron que `_horsego_platform_hint()`:
 
    ```python
-   def _tuganga_platform_hint() -> str:
-       repo = os.getenv("TUGANGA_REPO_DIR", "/opt/data/tuganga-agent")
+   def _loquiero_platform_hint() -> str:
+       repo = os.getenv("LOQUIERO_REPO_DIR", "/opt/data/loquiero-agent")
        try:
            subprocess.run(["git","-C",repo,"pull","--ff-only"],
                           check=False, capture_output=True, timeout=15)
@@ -51,13 +51,13 @@ de Kapso**, para no chocar con Rumpel ni HorseGo.
                    parts.append(fh.read().strip())
            except Exception:
                pass
-       return "\n\n".join(p for p in parts if p) or "Sos TU GANGA en WhatsApp."
+       return "\n\n".join(p for p in parts if p) or "Sos LO QUIERO en WhatsApp."
    ```
-   Y en `register(...)`: `platform_hint=_tuganga_platform_hint(),`
+   Y en `register(...)`: `platform_hint=_loquiero_platform_hint(),`
 4. Registrar el webhook en Kapso apuntando al puerto/host publico de este gateway
-   (`/kapso/webhook`), con el numero de TU GANGA.
+   (`/kapso/webhook`), con el numero de LO QUIERO.
 5. Arrancar el gateway. Despues, cada cambio: editar prompts -> `git push` -> en el VPS
-   `cd /opt/data/tuganga-agent && sh sync.sh` (reinicia el gateway con la persona nueva).
+   `cd /opt/data/loquiero-agent && sh sync.sh` (reinicia el gateway con la persona nueva).
 
 ## Probar
 Mandarle "LO QUIERO A6" por WhatsApp (o por Telegram si conectas ese canal para testear).

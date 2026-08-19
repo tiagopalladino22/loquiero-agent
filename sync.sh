@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
-# Aplica cambios del repo al agente TU GANGA vivo (Hermes/Kapso) y reinicia el gateway.
+# Aplica cambios del repo al agente LO QUIERO vivo (Hermes/Kapso) y reinicia el gateway.
 # Mismo patron que horsego-agent/sync.sh. La persona vive en prompts/PLATFORM_HINT.md +
 # prompts/TOOL-USE.md, y la herramienta en tools/reservar.mjs.
 #
 # Correr en el VPS como el usuario hermes:
-#     cd /opt/data/tuganga-agent && sh sync.sh
+#     cd /opt/data/loquiero-agent && sh sync.sh
 # o por cron cada pocos minutos (es no-op si no hay commits nuevos).
 #
 # Que hace, idempotente y cron-safe:
@@ -17,8 +17,8 @@
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN="${TUGANGA_KAPSO_ADAPTER:-/opt/data/plugins/kapso/adapter.py}"
-HEALTH_URL="${TUGANGA_HEALTH_URL:-http://localhost:8649/health}"
+PLUGIN="${LOQUIERO_KAPSO_ADAPTER:-/opt/data/plugins/kapso/adapter.py}"
+HEALTH_URL="${LOQUIERO_HEALTH_URL:-http://localhost:8649/health}"
 VENDORED="$REPO/vendor/kapso/adapter.py"
 
 before="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo none)"

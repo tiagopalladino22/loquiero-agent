@@ -1,4 +1,4 @@
-# TU GANGA — tool use (agregar a las instrucciones del bot)
+# LO QUIERO — tool use (agregar a las instrucciones del bot)
 
 Append esto al prompt del agente (junto a PLATFORM_HINT.md) para que reserve productos
 en el ops center. Ajustar la ruta si el repo vive en otro lado del VPS.
@@ -11,7 +11,7 @@ Cuando el cliente diga "LO QUIERO <codigo>" (o "quiero el A01", etc.), reserva e
 producto corriendo este comando en la terminal, pasando el codigo y el WhatsApp del
 cliente como un unico argumento JSON:
 
-  node /opt/data/tuganga-agent/tools/reservar.mjs '{"codigo":"A01","wa":"<telefono del cliente, digitos>"}'
+  node /opt/data/loquiero-agent/tools/reservar.mjs '{"codigo":"A01","wa":"<telefono del cliente, digitos>"}'
 
 Claves: codigo (obligatorio, ej "A01"), wa (opcional, el numero del cliente). Si solo
 tenes el texto suelto ("LO QUIERO A01"), tambien podes pasarlo tal cual y el script
