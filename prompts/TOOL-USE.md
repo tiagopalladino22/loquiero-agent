@@ -32,3 +32,33 @@ El comando imprime JSON. Interpretalo asi:
 
 No corras el comando si el cliente no dijo un codigo. No lo corras dos veces para el
 mismo pedido: una reserva exitosa ya deja el producto tomado.
+
+---
+
+REGISTRAR / DAR DE ALTA UN CLIENTE (herramienta)
+
+Cuando alguien se quiere sumar al grupo (Flujo B) y ya te dio su nombre (y lo que sepas
+de apellido y de quien lo invito), registralo corriendo:
+
+  node /opt/data/loquiero-agent/tools/registrar_cliente.mjs '{"nombre":"Ana","apellido":"Perez","ref":"MARTA","wa":"<telefono del cliente, digitos>"}'
+
+Claves: nombre (obligatorio), apellido (opcional), ref (opcional, quien lo invito: nombre
+o codigo, ej "MARTA" o "ref:MARTA"), wa (el numero del cliente en digitos, importante para
+poder cruzarlo despues con sus compras). El telefono sale del wa, no hace falta pedirlo.
+
+El comando imprime JSON. Interpretalo asi:
+
+- {"ok": true, "nuevo": true, "nombre", ...} -> quedo dado de alta. Confirmá con el nombre
+  y deci que lo suman al grupo en breve.
+- {"ok": true, "ya_registrado": true} -> ya estaba anotado. Saluda y no lo registres de nuevo.
+- {"ok": true, ..., "ref_no_encontrado": true} -> se registro igual, pero no matcheo el
+  referidor. Si todavia no habias preguntado quien lo invito, preguntalo (no menciones el error).
+- {"ok": false, "reason": "sin_nombre"} -> pedile el nombre.
+- {"ok": false, "reason": "config" | "network" | "rpc_error"} -> error tecnico; pedi
+  disculpas corto y deci que ya lo anotas. No inventes que quedo registrado.
+
+No corras el comando si el cliente todavia no dio el nombre. No lo corras dos veces para
+el mismo cliente.
+
+ENV NECESARIO (en el VPS, junto al bot): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
+(las mismas que usa reservar.mjs; fallback SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).
