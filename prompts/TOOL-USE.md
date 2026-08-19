@@ -60,5 +60,26 @@ El comando imprime JSON. Interpretalo asi:
 No corras el comando si el cliente todavia no dio el nombre. No lo corras dos veces para
 el mismo cliente.
 
+---
+
+MI LINK DE REFERIDO (herramienta)
+
+Cuando un cliente que ya esta adentro pide su link/codigo para invitar gente (Flujo C),
+buscalo corriendo, con el numero del cliente:
+
+  node /opt/data/loquiero-agent/tools/mi_link.mjs '{"wa":"<telefono del cliente, digitos>"}'
+
+El comando imprime JSON:
+
+- {"ok": true, "codigo", "mensaje", "link": "https://wa.me/..."} -> mandale el link tal cual
+  para que lo comparta. Podes mencionar su codigo.
+- {"ok": true, ..., "link": null} -> falta configurar el numero del bot; pasale el codigo y
+  deci que el link va enseguida. No inventes un link.
+- {"ok": false, "reason": "no_existe"} -> el numero no figura como cliente; ofrecele sumarse
+  (Flujo B).
+- {"ok": false, "reason": "config" | "network" | "rpc_error"} -> error tecnico; disculpate corto.
+
+El link es personal de ese cliente: nunca le pases el de otro.
+
 ENV NECESARIO (en el VPS, junto al bot): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 (las mismas que usa reservar.mjs; fallback SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).
