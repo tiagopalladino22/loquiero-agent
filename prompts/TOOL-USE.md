@@ -19,9 +19,12 @@ extrae el codigo.
 
 El comando imprime JSON. Interpretalo asi:
 
-- {"ok": true, "sku", "descripcion", "precio", "talle", "color", ...} -> quedo reservado
-  para este cliente (reserva atomica: solo el primero que pide gana). Confirmalo y segui
-  con el flujo (punto de entrega -> CVU -> comprobante).
+- {"ok": true, "sku", "descripcion", "precio", "talle", "color", "puntos", "cvu",
+  "cvu_titular", ...} -> quedo reservado para este cliente (reserva atomica: solo el primero
+  que pide gana). Ademas trae los datos de entrega/pago del momento: "puntos" (lista de
+  puntos activos con nombre/direccion/detalle) y "cvu" (+ "cvu_titular"). Usalos en el flujo
+  (ofrecer los puntos -> pasar el CVU -> pedir comprobante). Si "puntos" viene vacio o "cvu"
+  viene null, deci que el equipo coordina eso por privado, no inventes.
 - {"ok": false, "reason": "reservado"} -> otro cliente lo reservo primero. Avisale con
   onda y no sigas.
 - {"ok": false, "reason": "vendido"} -> ya se vendio.
