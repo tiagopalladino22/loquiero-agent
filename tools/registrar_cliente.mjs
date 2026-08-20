@@ -41,10 +41,13 @@ try {
 
 const nombre = String(arg.nombre || arg.name || "").trim();
 const apellido = String(arg.apellido || arg.lastname || "").trim() || null;
-// referidor: aceptar ref / referido_por / quien_invito; si viene "ref:MARTA" o
-// "codigo: MARTA" limpiar el prefijo.
+// referidor: aceptar ref / referido_por / quien_invito. Si el codigo viene dentro de una
+// frase ("me invitaron con este codigo: TIAGO21" o "ref:MARTA"), extraerlo; si no, usar el
+// texto tal cual (puede ser un nombre).
 let ref = String(arg.ref || arg.referidor || arg.referido_por || arg.quien_invito || "").trim();
-ref = ref.replace(/^(ref|c[oó]digo|cod)\s*[:=]\s*/i, "").trim() || null;
+const refMatch = ref.match(/(?:ref|c[oó]digo|cod)\s*[:=]\s*([A-Za-z0-9]+)/i);
+if (refMatch) ref = refMatch[1];
+ref = ref.trim() || null;
 const wa = String(arg.wa || arg.phone || arg.telefono || "").replace(/[^\d]/g, "") || null;
 const telefono = arg.telefono ? String(arg.telefono).trim() : null;
 
