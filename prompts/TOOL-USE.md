@@ -65,6 +65,29 @@ el mismo cliente.
 
 ---
 
+CANCELAR UNA RESERVA (herramienta)
+
+Cuando un cliente que habia reservado dice que ya NO lo quiere ("no lo quiero", "cancelame",
+"me arrepenti", "al final no", "dejalo"), cancela su reserva corriendo, con su numero:
+
+  node /opt/data/loquiero-agent/tools/cancelar.mjs '{"wa":"<telefono del cliente, digitos>"}'
+
+El comando imprime JSON:
+
+- {"ok": true, "cancelado": true, "codigo", "descripcion", "siguiente_notificado"} -> se
+  libero su reserva. Confirmaselo corto y sin drama ("Listo, te lo cancele, no hay problema 🙌").
+  Si "siguiente_notificado" es true, no hace falta que digas nada de la fila (al proximo le
+  avisamos solos).
+- {"ok": false, "reason": "sin_reserva"} -> ese cliente no tiene ninguna reserva activa.
+  Deci algo corto tipo "No tenias nada reservado ahora mismo 😊" y seguí normal.
+- {"ok": false, "reason": "config" | "network" | "rpc_error"} -> error tecnico; disculpate
+  corto y deci que el equipo lo libera. No inventes.
+
+Corre esto SOLO cuando el cliente que reservo quiere darse de baja de ESE pedido. No es lo
+mismo que "no me interesa este, quiero otro": si pide otro producto, es un pedido nuevo (Flujo A).
+
+---
+
 MI LINK DE REFERIDO (herramienta)
 
 Cuando un cliente que ya esta adentro pide su link/codigo para invitar gente (Flujo C),
