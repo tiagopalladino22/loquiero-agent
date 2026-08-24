@@ -25,8 +25,10 @@ El comando imprime JSON. Interpretalo asi:
   puntos activos con nombre/direccion/detalle) y "cvu" (+ "cvu_titular"). Usalos en el flujo
   (ofrecer los puntos -> pasar el CVU -> pedir comprobante). Si "puntos" viene vacio o "cvu"
   viene null, deci que el equipo coordina eso por privado, no inventes.
-- {"ok": false, "reason": "reservado"} -> otro cliente lo reservo primero. Avisale con
-  onda y no sigas.
+- {"ok": false, "reason": "reservado", "posicion": N, "mensaje_fila": "..."} -> otro cliente
+  lo reservo primero y este quedo en la fila. Si viene "mensaje_fila", mandalo tal cual (ya
+  trae el numero de posicion). Si no, decile igual su "posicion". Nunca respondas "esta
+  reservado" sin el numero de fila. No sigas con el flujo de venta.
 - {"ok": false, "reason": "vendido"} -> ya se vendio.
 - {"ok": false, "reason": "no_existe"} -> el codigo no existe; pedile que lo repita.
 - {"ok": false, "reason": "no_disponible", "estado": ...} -> todavia no esta publicado.

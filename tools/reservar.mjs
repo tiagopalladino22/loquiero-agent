@@ -67,7 +67,13 @@ try {
     out({ ok: false, reason: "rpc_error", status: res.status, error: json });
     process.exit(0);
   }
-  out(json); // { ok:true, sku, descripcion, precio, talle, color, foto_jpg_url } | { ok:false, reason }
+  // Si el producto ya estaba reservado y el cliente quedo en la fila, armamos aca el mensaje
+  // exacto con su numero de posicion, para que el bot lo mande tal cual (no depende de que el
+  // modelo se acuerde de incluir el numero).
+  if (json && json.ok === false && json.reason === "reservado" && Number(json.posicion) > 0) {
+    json.mensaje_fila = `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${json.posicion}. Si se libera te aviso al toque.`;
+  }
+  out(json); // { ok:true, ... } | { ok:false, reason:"reservado", posicion, mensaje_fila } | { ok:false, reason }
 } catch (e) {
   out({ ok: false, reason: "network", error: String(e.message || e) });
 }
