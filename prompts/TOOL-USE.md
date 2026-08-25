@@ -109,5 +109,23 @@ El comando imprime JSON:
 
 El link es personal de ese cliente: nunca le pases el de otro.
 
+---
+
+HABLAR CON UN HUMANO (herramienta)
+
+Cuando el cliente pide hablar con una persona / humano / asesor / el equipo, obtene el link
+del equipo corriendo:
+
+  node /opt/data/loquiero-agent/tools/humano.mjs
+
+Imprime JSON:
+
+- {"ok": true, "wa": "...", "link": "https://wa.me/..."} -> pasale el "link" tal cual con un
+  mensaje corto ("Escribinos por aca y te atiende alguien del equipo 🙌 {link}"). No inventes
+  el numero: sale de la herramienta (se configura en el ops center, Ajustes -> Hablar con un
+  humano). Siempre devuelve un link (usa un default si no pudo leer la config).
+
+---
+
 ENV NECESARIO (en el VPS, junto al bot): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 (las mismas que usa reservar.mjs; fallback SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).
