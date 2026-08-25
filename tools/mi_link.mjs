@@ -67,6 +67,11 @@ try {
     out(json || { ok: false, reason: "no_existe" }); // { ok:false, reason:"no_existe"|"sin_wa" }
     process.exit(0);
   }
+  // Todavia no es Bronce: le faltan compras para pedir el link. No armamos link.
+  if (json.elegible === false) {
+    out({ ok: true, elegible: false, nombre: json.nombre, compras: json.compras, minimo: json.minimo, faltan: json.faltan });
+    process.exit(0);
+  }
   const mensaje = mensajeInvitacion(json.codigo);
   const botWa = String(json.bot_wa || "").replace(/[^\d]/g, "");
   const link = botWa

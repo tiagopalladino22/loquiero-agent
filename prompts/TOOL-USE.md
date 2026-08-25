@@ -99,8 +99,11 @@ buscalo corriendo, con el numero del cliente:
 
 El comando imprime JSON:
 
-- {"ok": true, "codigo", "mensaje", "link": "https://wa.me/..."} -> mandale el link tal cual
-  para que lo comparta. Podes mencionar su codigo.
+- {"ok": true, "elegible": false, "compras", "minimo", "faltan"} -> todavia no es referidor:
+  para tener el link hay que tener al menos "minimo" compras (lleva "compras", le faltan
+  "faltan"). Decile eso corto y con onda, sin mandarle link ni codigo.
+- {"ok": true, "elegible": true, "codigo", "mensaje", "link": "https://wa.me/..."} -> mandale
+  el link tal cual para que lo comparta. Podes mencionar su codigo.
 - {"ok": true, ..., "link": null} -> falta configurar el numero del bot; pasale el codigo y
   deci que el link va enseguida. No inventes un link.
 - {"ok": false, "reason": "no_existe"} -> el numero no figura como cliente; ofrecele sumarse
