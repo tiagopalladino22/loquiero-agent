@@ -19,10 +19,13 @@ en el ops center, ofrece punto de entrega, pasa el CVU y pide el comprobante.
   `reservado` de forma **atomica** (solo el primer "lo quiero" gana) y devuelve sus datos;
   si no, devuelve el motivo. (Definido en el repo `tuganga-ops`.)
 
-## Antes de deployar: completar placeholders
-En `prompts/PLATFORM_HINT.md`:
-- `{{PUNTO_1}}` / `{{PUNTO_2}}` -> los puntos de entrega reales.
-- `{{CVU}}` -> el CVU/alias real de LO QUIERO.
+## Datos de entrega y pago: se gestionan en el ops center (no en el prompt)
+Los **puntos de entrega**, el **CVU** y el titular NO son placeholders del prompt: salen en
+la respuesta de `reservar_producto` (campos `puntos` / `cvu` / `cvu_titular`) y se editan en
+el ops center (tabla `puntos_entrega` + config `cvu`/`cvu_titular`). El prompt (A3/A4) los usa
+tal cual vienen. (Historico: antes eran `{{PUNTO_1}}`/`{{PUNTO_2}}`/`{{CVU}}` fijos; se
+migraron al ops center en ago-2026. Si el bot muestra puntos viejos, esta corriendo un prompt
+anterior a eso: hace falta `git pull` + restart.)
 
 ## Deploy en el VPS (como HorseGo, pero su propio gateway)
 El bot corre en **su propio gateway** (puerto propio, ej `8649`) con **su propio webhook
