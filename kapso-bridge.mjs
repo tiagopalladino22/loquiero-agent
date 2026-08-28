@@ -119,6 +119,20 @@ async function cancelarReserva(wa) {
   log({ type: 'cancelar', wa, code: r.code, out: r.out, err: r.err });
   try { return JSON.parse(r.out); } catch { return { ok: false, reason: 'error', error: r.err || r.out }; }
 }
+// Busca un cliente por su numero de WhatsApp (para no re-preguntar datos si ya esta anotado).
+const SUPA_URL = (process.env.LOQUIERO_SUPABASE_URL || 'https://stizanbebncgxzntfwua.supabase.co').replace(/\/+$/, '');
+const SUPA_KEY = process.env.LOQUIERO_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+async function buscarCliente(wa) {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/clientes?wa_user_id=eq.${encodeURIComponent(String(wa))}&select=nombre,codigo&limit=1`, {
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
+    });
+    if (!res.ok) return { existe: false };
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length ? { existe: true, nombre: rows[0].nombre, codigo: rows[0].codigo } : { existe: false };
+  } catch (e) { log({ type: 'buscar_cliente_error', wa, error: String(e?.message || e) }); return { existe: false }; }
+}
+
 function productoDesc(j) {
   return [j.descripcion, j.color && `color ${j.color}`, j.talle && `talle ${j.talle}`].filter(Boolean).join(', ');
 }
@@ -193,6 +207,7 @@ function buildBrainPrompt(userText, st) {
     'HERRAMIENTAS: cuando el cliente claramente quiere una de estas acciones (aunque lo diga indirecto segun el hilo), respondé EXACTAMENTE con el token, SOLO el token y NADA MAS. NO expliques ni derives al equipo para esto: el sistema ejecuta la accion de verdad.',
     '- [[MI_LINK]] -> para CUALQUIER cosa sobre SU PROPIO link de referido o si EL ya puede tenerlo: pedirlo, aceptar que se lo generes, o preguntar si necesita compras / como lo consigue / si ya esta habilitado (ej "dale pasamelo", "quiero mi link", "necesito comprar para tener mi link?", "puedo tener el link ya?"). MUY IMPORTANTE: NO decidas vos si necesita compras o no, ni le digas cuantas le faltan; eso lo resuelve la herramienta, porque este cliente puede estar habilitado aunque no tenga compras (puede tener el nivel forzado). Solo si pregunta como funciona o cuanto se gana el programa EN GENERAL (no sobre su propio link), explicá sin el token.',
     '- [[CANCELAR]] -> si quiere cancelar/liberar SU reserva o pedido (ej "lo quiero liberar", "liberalo", "soltalo", "al final no", "ya no lo quiero", "dejalo"). OJO: si dice que quiere OTRO producto, eso NO es cancelar.',
+    'NO inicies vos el flujo de compra/pago (elegir punto de entrega, pasar el CVU, pedir el comprobante): eso es AUTOMATICO y solo pasa despues de que la persona reserva un producto con "LO QUIERO" + el codigo. Si alguien pregunta por los puntos, precios o como comprar SIN haber reservado (por curiosidad), respondé como INFO y NO le pidas que elija un punto ni le ofrezcas datos para transferir. Si quiere comprar algo, decile que te mande "LO QUIERO" + el codigo del producto.',
     estado, prod,
     `<<<\n${histText}\nCliente: ${String(userText || '').slice(0, 1500)}\n>>>`,
     'Escribi SOLO la respuesta de WhatsApp al ultimo mensaje del cliente:',
@@ -406,9 +421,11 @@ async function verificarComprobante(payload, wa, st) {
     await send(wa, `Recibimos el comprobante, pero no pudimos validar todos los datos automáticamente. El equipo lo revisa y te confirma 💚`);
   }
 }
-async function handle(payload) {
-  const { text, wa, hasMedia, event } = extract(payload);
-  log({ type: 'incoming', event, wa, text, hasMedia, payload });
+async function handle(payload, textOverride) {
+  let { text, wa, hasMedia, event } = extract(payload);
+  // Si viene texto combinado (varios mensajes cortados juntados por el batch), usamos ese.
+  if (textOverride != null) text = textOverride;
+  log({ type: 'incoming', event, wa, text, hasMedia, batched: textOverride != null, payload });
   if (!wa) return { ok: false, reason: 'no_wa' };
   const state = loadState();
   const st = state[wa] || {};
@@ -435,6 +452,19 @@ async function handle(payload) {
     return replyMiLink(wa, state, st);
   }
   if (st.step === 'group_ask_data' || wantsGroup(text)) {
+    // Si es el inicio (no venimos juntando datos) y ya es cliente por su NUMERO, dale el link
+    // directo: no re-preguntes nombre/apellido/referidor para despues decir "ya estabas anotado".
+    if (st.step !== 'group_ask_data') {
+      const c = await buscarCliente(wa);
+      if (c.existe) {
+        st.step = 'group_registered'; state[wa] = st; saveState(state);
+        const msg = `Ya estás anotado 😄 Este es el link del grupo: ${GRUPO_LINK}`;
+        await send(wa, msg);
+        st.history = (st.history || []).concat({ role: 'bot', text: msg }).slice(-8);
+        state[wa] = st; saveState(state);
+        return { ok: true };
+      }
+    }
     const data = parseAlta(text);
     const pending = { ...(st.group_pending || {}) };
     if (st.step === 'group_ask_data' && hasRealName(pending) && !data.ref && !wantsGroup(text)) data.ref = text.trim();
@@ -539,16 +569,43 @@ function _alreadySeen(id) {
   if (_seenIds.size > 1000) _seenIds.delete(_seenIds.values().next().value);
   return false;
 }
-function schedule(payload) {
-  const wa = extract(payload).wa || 'unknown';
-  const id = messageIdFrom(payload) || mediaIdFrom(payload);
-  if (_alreadySeen(id)) { log({ type: 'dup_skip', wa, id }); return; }
+// Encola el procesamiento de un mensaje (o de un lote de texto ya combinado) en la cola
+// serializada del usuario.
+function enqueue(wa, payload, textOverride) {
   const prev = _chains.get(wa) || Promise.resolve();
   const next = prev
-    .then(() => handle(payload))
+    .then(() => handle(payload, textOverride))
     .catch((e) => log({ type: 'handle_error', wa, error: String(e?.stack || e) }))
     .finally(() => { if (_chains.get(wa) === next) _chains.delete(wa); });
   _chains.set(wa, next);
+}
+
+// Batch de mensajes cortados: la gente a veces manda una idea en varios mensajes ("tiene
+// costo el envio" / "?"). En vez de contestar cada uno, esperamos una ventanita; si llegan
+// mas, se acumulan y se contestan JUNTOS. Los mensajes con media (comprobante) NO se batchean.
+const BATCH_MS = Number(process.env.LOQUIERO_BATCH_MS || 6000);
+const _buffers = new Map();
+function bufferText(wa, payload, text) {
+  let b = _buffers.get(wa);
+  if (!b) { b = { texts: [], payload }; _buffers.set(wa, b); }
+  if (text) b.texts.push(text);
+  b.payload = payload; // guardamos el ultimo payload (para wa/contexto)
+  if (b.timer) clearTimeout(b.timer);
+  b.timer = setTimeout(() => {
+    _buffers.delete(wa);
+    const combined = b.texts.join('\n').trim();
+    if (!combined) return;
+    enqueue(wa, b.payload, combined);
+  }, BATCH_MS);
+}
+
+function schedule(payload) {
+  const info = extract(payload);
+  const wa = info.wa || 'unknown';
+  const id = messageIdFrom(payload) || mediaIdFrom(payload);
+  if (_alreadySeen(id)) { log({ type: 'dup_skip', wa, id }); return; }
+  if (info.hasMedia) { enqueue(wa, payload); return; } // media (comprobante): procesar ya
+  bufferText(wa, payload, info.text);
 }
 
 const server = http.createServer(async (req, res) => {
