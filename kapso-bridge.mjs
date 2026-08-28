@@ -164,6 +164,32 @@ async function marcarComprobante(wa, sku, estado, url, ocr) {
   } catch (e) { log({ type: 'marcar_comprobante_error', wa, error: String(e?.message || e) }); return null; }
 }
 
+// Titular/CVU del metodo de pago ACTIVO (metodos_pago). El OCR compara el destinatario del
+// comprobante contra estos tokens, asi valida contra el CVU que esta activo (no uno fijo).
+function normToken(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+async function getRecipients() {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/metodos_pago?activo=eq.true&select=cvu,titular&limit=1`, {
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
+    });
+    if (res.ok) {
+      const rows = await res.json();
+      const m = Array.isArray(rows) && rows[0];
+      if (m) {
+        const toks = [];
+        if (m.cvu) { toks.push(normToken(m.cvu)); toks.push(normToken(m.cvu).replace(/[.\s]/g, '')); }
+        if (m.titular) { toks.push(normToken(m.titular)); toks.push(normToken(m.titular).replace(/\s+/g, '')); }
+        const uniq = [...new Set(toks.filter(Boolean))];
+        if (uniq.length) return uniq.join('|');
+      }
+    }
+    log({ type: 'recipients_empty', note: 'no hay metodo de pago activo' });
+  } catch (e) { log({ type: 'recipients_error', error: String(e?.message || e) }); }
+  return '';
+}
+
 function productoDesc(j) {
   return [j.descripcion, j.color && `color ${j.color}`, j.talle && `talle ${j.talle}`].filter(Boolean).join(', ');
 }
@@ -434,7 +460,7 @@ async function verificarComprobante(payload, wa, st) {
     return;
   }
   const expectedDate = todayArgentina();
-  const recipients = 'palladinot|tiago palladino|0000003100066855251372';
+  const recipients = await getRecipients(); // titular/CVU del metodo de pago activo
   const ocr = await sh('uv', ['run', '--with', 'rapidocr-onnxruntime', '--with', 'pillow', 'python', '/opt/data/loquiero-agent/tools/ocr-receipt.py', imgPath, String(st.producto.precio), expectedDate, recipients]);
   log({ type: 'ocr_receipt', mediaId, wa, code: ocr.code, out: ocr.out.slice(0, 3000), err: ocr.err.slice(0, 1000) });
   let v = null; try { v = JSON.parse(ocr.out); } catch {}
