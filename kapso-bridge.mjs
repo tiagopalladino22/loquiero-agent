@@ -335,78 +335,6 @@ async function replyMiLink(wa, state, st) {
   return { ok: true };
 }
 
-// ── Drops: listar disponibles por drop / dia ──────────────────────────────
-// "pasame los disponibles del Drop 1 del lunes" -> solo esos productos (publicados).
-// El dia se resuelve a una fecha real (zona AR): dia de la semana = semana en curso;
-// tambien acepta "hoy", "manana" y fecha explicita (31/8).
-const _DIAS_ABR = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
-function hoyAR() {
-  // en-CA -> "YYYY-MM-DD"
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-}
-function _ymdToUTC(f) { const [y, m, d] = f.split('-').map(Number); return Date.UTC(y, m - 1, d); }
-function _utcToYmd(ms) { const dt = new Date(ms); return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`; }
-function addDias(f, n) { return _utcToYmd(_ymdToUTC(f) + n * 86400000); }
-function dowOf(f) { return new Date(_ymdToUTC(f)).getUTCDay(); }
-function fechaDeDiaSemana(targetDow) { const h = hoyAR(); return addDias(h, targetDow - dowOf(h)); }
-function fmtDrop(fecha, numero) {
-  const [, m, d] = fecha.split('-');
-  return `${_DIAS_ABR[dowOf(fecha)]} ${+d}/${+m}${numero ? ` · Drop ${numero}` : ''}`;
-}
-// Devuelve { fecha, numero, dia } si el mensaje pide un listado de disponibles, si no null.
-function parseDropQuery(text) {
-  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const mNum = t.match(/drop\s*([123])\b/) || t.match(/drop\s*(uno|dos|tres)\b/);
-  const numero = mNum ? ({ uno: 1, dos: 2, tres: 3 }[mNum[1]] ?? Number(mNum[1])) || null : null;
-  const hasDrop = /\bdrop\b/.test(t);
-  // dia -> fecha
-  let fecha = null, dia = false;
-  const dm = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-  if (dm) {
-    let [, d, m, y] = dm; d = +d; m = +m;
-    y = y ? (+y < 100 ? 2000 + +y : +y) : +hoyAR().slice(0, 4);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) { fecha = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; dia = true; }
-  }
-  if (!fecha && /\bhoy\b/.test(t)) { fecha = hoyAR(); dia = true; }
-  if (!fecha && /\bmanana\b/.test(t)) { fecha = addDias(hoyAR(), 1); dia = true; }
-  if (!fecha) {
-    const dias = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };
-    for (const [k, v] of Object.entries(dias)) if (new RegExp(`\\b${k}\\b`).test(t)) { fecha = fechaDeDiaSemana(v); dia = true; break; }
-  }
-  const listPhrase = /(disponible|pasame los|pasame las|mostrame|mostra |que hay|que tenes|que ropa|que productos|listado|lista de|los del|las del)/.test(t);
-  const strongList = /(pasame los disponibles|que hay disponible|productos disponibles|que productos hay|mostrame los disponibles|lista de disponibles)/.test(t);
-  const trigger = hasDrop || (dia && listPhrase) || strongList;
-  if (!trigger) return null;
-  return { fecha: fecha || hoyAR(), numero, dia };
-}
-async function listarDisponibles(fecha, numero) {
-  let url = `${SUPA_URL}/rest/v1/productos?estado=eq.publicado&drop_fecha=eq.${fecha}&select=sku,descripcion,precio,talle,drop_numero&order=drop_numero.asc,sku.asc`;
-  if (numero) url += `&drop_numero=eq.${numero}`;
-  try {
-    const res = await fetch(url, { headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` } });
-    return res.ok ? await res.json() : [];
-  } catch { return []; }
-}
-async function replyDisponibles(wa, q, st, state) {
-  const arr = await listarDisponibles(q.fecha, q.numero);
-  let msg;
-  if (!arr.length) {
-    msg = `No hay productos disponibles ${fmtDrop(q.fecha, q.numero)} 🙌`;
-  } else {
-    const lines = arr.map((p) => {
-      const precio = p.precio != null ? ` — $${Math.round(Number(p.precio)).toLocaleString('es-AR')}` : '';
-      const talle = p.talle ? ` (talle ${p.talle})` : '';
-      const desc = [p.sku, p.descripcion].filter(Boolean).join(' ');
-      return `• ${desc || '(sin nombre)'}${talle}${precio}`;
-    });
-    msg = `Disponibles ${fmtDrop(q.fecha, q.numero)} (${arr.length}):\n${lines.join('\n')}`;
-  }
-  await send(wa, msg);
-  st.history = (st.history || []).concat({ role: 'bot', text: msg }).slice(-8);
-  state[wa] = st; saveState(state);
-  return { ok: true, drops: arr.length };
-}
-
 function faqAnswer(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (/\b(que es|qu[eé] es|como funciona|info|informacion)\b/.test(t) && /lo quiero|ropa|tienda|esto|funciona/.test(t)) {
@@ -590,11 +518,6 @@ async function handle(payload, textOverride) {
   }
   if (wantsMyLink(text)) {
     return replyMiLink(wa, state, st);
-  }
-  // "pasame los disponibles del Drop 1 del lunes" -> lista solo esos productos.
-  if (st.step !== 'group_ask_data' && st.step !== 'awaiting_payment') {
-    const dq = parseDropQuery(text);
-    if (dq) return replyDisponibles(wa, dq, st, state);
   }
   if (st.step === 'group_ask_data' || wantsGroup(text)) {
     // Si es el inicio (no venimos juntando datos) y ya es cliente por su NUMERO, dale el link
