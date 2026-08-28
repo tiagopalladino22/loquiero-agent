@@ -133,6 +133,37 @@ async function buscarCliente(wa) {
   } catch (e) { log({ type: 'buscar_cliente_error', wa, error: String(e?.message || e) }); return { existe: false }; }
 }
 
+// Sube la foto del comprobante (ya descargada localmente) al bucket publico de Storage y
+// devuelve la URL publica, o null si falla (best-effort).
+async function uploadComprobante(imgPath, wa, mediaId) {
+  try {
+    const bytes = readFileSync(imgPath);
+    const path = `${wa}-${mediaId}.jpg`;
+    const res = await fetch(`${SUPA_URL}/storage/v1/object/comprobantes/${encodeURIComponent(path)}`, {
+      method: 'POST',
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, 'content-type': 'image/jpeg', 'x-upsert': 'true' },
+      body: bytes,
+    });
+    if (!res.ok) { log({ type: 'upload_comprobante_fail', wa, status: res.status, body: (await res.text()).slice(0, 300) }); return null; }
+    return `${SUPA_URL}/storage/v1/object/public/comprobantes/${encodeURIComponent(path)}`;
+  } catch (e) { log({ type: 'upload_comprobante_error', wa, error: String(e?.message || e) }); return null; }
+}
+
+// Registra el comprobante contra la compra (foto + lectura OCR + estado dudoso/aprobado) via
+// RPC. El RPC ademas saca el producto de la auto-liberacion (reservado -> vendido).
+async function marcarComprobante(wa, sku, estado, url, ocr) {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/rpc/marcar_comprobante`, {
+      method: 'POST',
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ p_wa: wa, p_sku: sku, p_estado: estado, p_url: url, p_ocr: ocr }),
+    });
+    const j = await res.json().catch(() => null);
+    log({ type: 'marcar_comprobante', wa, sku, estado, ok: res.ok, resp: j });
+    return j;
+  } catch (e) { log({ type: 'marcar_comprobante_error', wa, error: String(e?.message || e) }); return null; }
+}
+
 function productoDesc(j) {
   return [j.descripcion, j.color && `color ${j.color}`, j.talle && `talle ${j.talle}`].filter(Boolean).join(', ');
 }
@@ -407,7 +438,15 @@ async function verificarComprobante(payload, wa, st) {
   const ocr = await sh('uv', ['run', '--with', 'rapidocr-onnxruntime', '--with', 'pillow', 'python', '/opt/data/loquiero-agent/tools/ocr-receipt.py', imgPath, String(st.producto.precio), expectedDate, recipients]);
   log({ type: 'ocr_receipt', mediaId, wa, code: ocr.code, out: ocr.out.slice(0, 3000), err: ocr.err.slice(0, 1000) });
   let v = null; try { v = JSON.parse(ocr.out); } catch {}
+  // Subir la foto del comprobante y registrar la lectura contra la compra (foto + OCR + estado).
+  const fotoUrl = await uploadComprobante(imgPath, wa, mediaId);
+  const ocrJson = {
+    aprobado: !!(v && v.approved),
+    esperado: { monto: st.producto.precio, fecha: expectedDate, titular: recipients },
+    leido: v,
+  };
   if (v?.approved) {
+    await marcarComprobante(wa, st.producto.sku, 'aprobado', fotoUrl, ocrJson);
     const sold = await marcarVendido(st.producto.sku, wa);
     const state = loadState();
     state[wa] = { ...(state[wa] || {}), step: sold?.ok ? 'sold_receipt' : 'payment_received_needs_manual_sale', receipt: v, sold };
@@ -418,6 +457,9 @@ async function verificarComprobante(payload, wa, st) {
       await send(wa, 'Comprobante recibido. El equipo termina de confirmarlo y te contacta por la entrega 💚');
     }
   } else {
+    // Comprobante dudoso: queda marcado para revision manual desde el ops center (Compras),
+    // y el producto pasa a "vendido" (comprobante recibido) para no auto-liberarse.
+    await marcarComprobante(wa, st.producto.sku, 'dudoso', fotoUrl, ocrJson);
     await send(wa, `Recibimos el comprobante, pero no pudimos validar todos los datos automáticamente. El equipo lo revisa y te confirma 💚`);
   }
 }
