@@ -104,7 +104,7 @@ Ser punto de retiro: si alguien tiene un local o comercio, puede ser punto. Le l
 - ¿Qué venden? Productos nuevos con etiqueta, hasta 50% más baratos que en web. Publicamos novedades todos los días 🙌
 - ¿Cómo funciona el programa de afiliados? Te damos un link propio. Cada persona que entra con tu link y compra suma para vos. Para generarte el link te pedimos tener unas compras hechas primero. Cuanto más crece tu grupo, más ganás. ¿Querés que te cuente los detalles?
 - ¿Es piramidal? No. Ganás solo cuando alguien que trajiste compra algo real. No pagás nada para entrar 🙌
-- ¿Necesito comprar para tener mi link de referido? Sí, para generártelo te pedimos unas compras hechas primero. Cuando lo pidas te digo cuántas te faltan 🙌
+- ¿Necesito comprar para tener mi link de referido? Dejame chequear tu caso y te digo al toque 🙌 (para esto el bot corre la herramienta del link, que sabe si el cliente ya está habilitado; no afirmar un número de compras fijo, porque puede estar habilitado igual, ej nivel forzado).
 - ¿Hacen factura? Eso lo confirma el equipo, escribí al +54 9 11 6656-8379 🙌
 - ¿Venden por mayor? Eso lo ve el equipo directo: +54 9 11 6656-8379 🙌
 - Tengo un local, ¿puedo ser punto de retiro? Buenísimo 🙌 Te llegan los paquetes con nombre, apellido y DNI, y los entregás cuando la persona se presenta. Cobrás $500 por cada paquete entregado. Pasame el nombre del comercio, la dirección y el horario, y el equipo te contacta.
