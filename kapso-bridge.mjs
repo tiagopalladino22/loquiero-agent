@@ -7,7 +7,7 @@ const PHONE_NUMBER_ID = process.env.KAPSO_PHONE_NUMBER_ID || '1329393980246912';
 const BRIDGE_SECRET = process.env.KAPSO_BRIDGE_SECRET || '';
 const STATE_PATH = process.env.LOQUIERO_STATE_PATH || '/opt/data/loquiero-agent/kapso-state.json';
 const LOG_PATH = process.env.LOQUIERO_LOG_PATH || '/opt/data/loquiero-agent/kapso-bridge.log';
-const GRUPO_LINK = 'https://chat.whatsapp.com/Fm7huwqkHWq6NOoDBGptye?mode=gi_t';
+const GRUPO_LINK = 'https://chat.whatsapp.com/EgEsQx5tQrqA8vkbxdIV36?mode=gi_t';
 const HUMANO_LINK = 'https://wa.me/5491166568379';
 
 function log(obj) {
@@ -66,7 +66,13 @@ function extract(payload) {
   const msgType = payload?.message?.type || payload?.data?.message?.type || payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.type;
   const explicitHasMedia = payload?.message?.kapso?.has_media === true || payload?.data?.message?.kapso?.has_media === true;
   const hasMedia = explicitHasMedia || ['image','document','audio','video'].includes(String(msgType || '').toLowerCase());
-  return { event, text: String(text || '').trim(), wa, hasMedia };
+  // Nombre de perfil de WhatsApp (para no tener que pedir el nombre en el alta).
+  const profileName = String(
+    payload?.message?.kapso?.contact_name || payload?.data?.message?.kapso?.contact_name ||
+    payload?.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.profile?.name ||
+    payload?.message?.contact_name || payload?.contact_name || ''
+  ).trim();
+  return { event, text: String(text || '').trim(), wa, hasMedia, profileName };
 }
 function codigoFrom(text) {
   const upper = text.toUpperCase();
@@ -178,8 +184,9 @@ async function getRecipients() {
       const rows = await res.json();
       const m = Array.isArray(rows) && rows[0];
       if (m) {
+        // Validamos SOLO por el nombre del titular. El alias/CVU no se usa como dato de
+        // destino: alcanza con que el monto sea correcto y el nombre coincida.
         const toks = [];
-        if (m.cvu) { toks.push(normToken(m.cvu)); toks.push(normToken(m.cvu).replace(/[.\s]/g, '')); }
         if (m.titular) { toks.push(normToken(m.titular)); toks.push(normToken(m.titular).replace(/\s+/g, '')); }
         const uniq = [...new Set(toks.filter(Boolean))];
         if (uniq.length) return uniq.join('|');
@@ -441,6 +448,16 @@ async function marcarVendido(sku, wa) {
   log({ type: 'marcar_vendido_comprobante', sku, wa, code: r.code, out: r.out, err: r.err });
   try { return JSON.parse(r.out); } catch { return { ok: false, reason: 'error', error: r.err || r.out }; }
 }
+// Guarda punto de entrega y/o DNI en la compra del producto (para verlos en el ops center).
+async function guardarDatosEntrega({ wa, sku, punto, dni }) {
+  const env = {
+    LOQUIERO_SUPABASE_URL: process.env.LOQUIERO_SUPABASE_URL || 'https://stizanbebncgxzntfwua.supabase.co',
+    LOQUIERO_SUPABASE_SERVICE_ROLE_KEY: process.env.LOQUIERO_SUPABASE_SERVICE_ROLE_KEY || ''
+  };
+  const r = await sh('node', ['/opt/data/loquiero-agent/tools/guardar-datos-entrega.mjs', JSON.stringify({ wa, sku, punto, dni })], { env });
+  log({ type: 'guardar_datos_entrega', wa, sku, punto: punto || null, dni: dni ? 'set' : null, code: r.code, out: r.out, err: r.err });
+  try { return JSON.parse(r.out); } catch { return { ok: false, reason: 'error', error: r.err || r.out }; }
+}
 async function verificarComprobante(payload, wa, st) {
   const mediaId = mediaIdFrom(payload);
   if (!st?.producto?.sku || !st?.producto?.precio) {
@@ -464,14 +481,17 @@ async function verificarComprobante(payload, wa, st) {
   const ocr = await sh('uv', ['run', '--with', 'rapidocr-onnxruntime', '--with', 'pillow', 'python', '/opt/data/loquiero-agent/tools/ocr-receipt.py', imgPath, String(st.producto.precio), expectedDate, recipients]);
   log({ type: 'ocr_receipt', mediaId, wa, code: ocr.code, out: ocr.out.slice(0, 3000), err: ocr.err.slice(0, 1000) });
   let v = null; try { v = JSON.parse(ocr.out); } catch {}
+  // Aprobacion: SOLO monto correcto + nombre del titular coincide. No se chequea el estado
+  // de la transferencia (varia entre bancos) ni la fecha ni el alias/CVU.
+  const aprobado = !!(v && v.amount_ok && v.recipient_ok);
   // Subir la foto del comprobante y registrar la lectura contra la compra (foto + OCR + estado).
   const fotoUrl = await uploadComprobante(imgPath, wa, mediaId);
   const ocrJson = {
-    aprobado: !!(v && v.approved),
-    esperado: { monto: st.producto.precio, fecha: expectedDate, titular: recipients },
+    aprobado,
+    esperado: { monto: st.producto.precio, titular: recipients },
     leido: v,
   };
-  if (v?.approved) {
+  if (aprobado) {
     await marcarComprobante(wa, st.producto.sku, 'aprobado', fotoUrl, ocrJson);
     const sold = await marcarVendido(st.producto.sku, wa);
     const state = loadState();
@@ -490,7 +510,7 @@ async function verificarComprobante(payload, wa, st) {
   }
 }
 async function handle(payload, textOverride) {
-  let { text, wa, hasMedia, event } = extract(payload);
+  let { text, wa, hasMedia, event, profileName } = extract(payload);
   // Si viene texto combinado (varios mensajes cortados juntados por el batch), usamos ese.
   if (textOverride != null) text = textOverride;
   log({ type: 'incoming', event, wa, text, hasMedia, batched: textOverride != null, payload });
@@ -519,10 +539,10 @@ async function handle(payload, textOverride) {
   if (wantsMyLink(text)) {
     return replyMiLink(wa, state, st);
   }
-  if (st.step === 'group_ask_data' || wantsGroup(text)) {
-    // Si es el inicio (no venimos juntando datos) y ya es cliente por su NUMERO, dale el link
-    // directo: no re-preguntes nombre/apellido/referidor para despues decir "ya estabas anotado".
-    if (st.step !== 'group_ask_data') {
+  if (st.step === 'group_ask_ref' || st.step === 'group_ask_data' || wantsGroup(text)) {
+    const enFlujo = st.step === 'group_ask_ref' || st.step === 'group_ask_data';
+    // Si es el inicio (no venimos en el flujo) y ya es cliente por su NUMERO, dale el link.
+    if (!enFlujo) {
       const c = await buscarCliente(wa);
       if (c.existe) {
         st.step = 'group_registered'; state[wa] = st; saveState(state);
@@ -535,35 +555,32 @@ async function handle(payload, textOverride) {
     }
     const data = parseAlta(text);
     const pending = { ...(st.group_pending || {}) };
-    if (st.step === 'group_ask_data' && hasRealName(pending) && !data.ref && !wantsGroup(text)) data.ref = text.trim();
-    if (!hasRealName(pending) && hasRealName(data)) { pending.nombre = data.nombre; pending.apellido = data.apellido || pending.apellido || ''; }
+    // NO pedimos nombre/apellido: si vienen en el mensaje los tomamos, si no usamos el nombre
+    // del perfil de WhatsApp. Lo unico que puede faltar y sí preguntamos es QUIÉN lo invitó.
+    if (!hasRealName(pending) && hasRealName(data)) { pending.nombre = data.nombre; pending.apellido = data.apellido || ''; }
     if (data.ref) pending.ref = data.ref;
+    // Si estamos esperando el referidor y el mensaje no trajo un ref explícito, tomamos el texto
+    // como el referidor (están respondiendo "¿quién te invitó?").
+    if (enFlujo && !pending.ref && !wantsGroup(text)) pending.ref = String(text || '').trim() || null;
     st.group_pending = pending;
-    const missingName = !hasRealName(pending);
-    const missingRef = !pending.ref;
-    if (missingName || missingRef) {
-      st.step = 'group_ask_data'; state[wa] = st; saveState(state);
-      if (missingName && missingRef) {
-      await send(wa, '¡Qué bueno! Pasame tu nombre y apellido, y quién te invitó 🙌');
-      } else if (missingName) {
-        await send(wa, 'Genial. Pasame tu nombre y apellido así te anotamos 🙌');
-      } else {
-        await send(wa, '¿Quién te invitó? Así lo dejamos registrado 🙌');
-      }
+
+    if (!pending.ref) {
+      st.step = 'group_ask_ref'; state[wa] = st; saveState(state);
+      await send(wa, '¡Qué bueno! ¿Quién te invitó? Pasame su nombre o código y te sumo al toque 🙌');
       return { ok: true };
     }
-    const j = await registrarCliente({ ...pending, wa });
+    // Nombre para registrar (nunca lo pedimos): mensaje > perfil de WhatsApp > generico.
+    const nombre = pending.nombre || profileName || 'Cliente';
+    const j = await registrarCliente({ nombre, apellido: pending.apellido || '', ref: pending.ref, wa });
     if (j.ok && j.nuevo) {
       st.step = 'group_registered'; st.group = j; delete st.group_pending; state[wa] = st; saveState(state);
-      await send(wa, `Listo ${j.nombre || pending.nombre}, ya te anoté 🙌 Entrá al grupo con este link: ${GRUPO_LINK} ¡Bienvenido a LO QUIERO! 💚`);
+      await send(wa, `Listo ${j.nombre || nombre}, ya te anoté 🙌 Entrá al grupo con este link: ${GRUPO_LINK} ¡Bienvenido a LO QUIERO! 💚`);
     } else if (j.ok && j.ya_registrado) {
       st.step = 'group_registered'; st.group = j; delete st.group_pending; state[wa] = st; saveState(state);
       await send(wa, `Ya estabas anotado 😄 Este es el link del grupo: ${GRUPO_LINK}`);
-    } else if (j.reason === 'sin_nombre') {
-      st.step = 'group_ask_data'; state[wa] = st; saveState(state);
-      await send(wa, 'Pasame tu nombre así te anotamos 🙌');
     } else {
-      await send(wa, 'Perdón, hubo un problema. Ya te anotamos y te confirmamos por privado.');
+      st.step = 'group_registered'; state[wa] = st; saveState(state);
+      await send(wa, `Listo, te sumo 🙌 Entrá al grupo con este link: ${GRUPO_LINK} ¡Bienvenido a LO QUIERO! 💚`);
     }
     return { ok: true };
   }
@@ -571,10 +588,23 @@ async function handle(payload, textOverride) {
     const punto = matchDeliveryPoint(text, st.producto);
     if (punto) {
       st.delivery = punto.nombre || String(punto);
-      st.step = 'awaiting_payment'; state[wa] = st; saveState(state);
-      await send(wa, paymentText(st.producto));
+      // Guardamos el punto elegido en la compra y pasamos a pedir el DNI (para la entrega).
+      await guardarDatosEntrega({ wa, sku: st.producto?.sku, punto: st.delivery });
+      st.step = 'ask_dni'; state[wa] = st; saveState(state);
+      await send(wa, `Genial, ${st.delivery} 🙌 Pasame tu DNI (solo los números) así lo dejamos listo para la entrega.`);
     } else {
       await send(wa, askDeliveryText(st.producto));
+    }
+    return { ok: true };
+  }
+  if (st.step === 'ask_dni') {
+    const dni = (String(text || '').match(/\d[\d.\s]{6,10}\d/) || [])[0]?.replace(/[.\s]/g, '') || '';
+    if (dni.length >= 7 && dni.length <= 9) {
+      await guardarDatosEntrega({ wa, sku: st.producto?.sku, dni });
+      st.dni = dni; st.step = 'awaiting_payment'; state[wa] = st; saveState(state);
+      await send(wa, `Perfecto 🙌 ${paymentText(st.producto)}`);
+    } else {
+      await send(wa, 'Pasame tu DNI con los números nada más (sin puntos), así lo cargo bien 🙌');
     }
     return { ok: true };
   }
@@ -589,6 +619,8 @@ async function handle(payload, textOverride) {
       await send(wa, `Sí, sigue reservado para vos. ${paymentText(st.producto)}`);
     } else if (st.step === 'ask_delivery') {
       await send(wa, `Sí, te lo tengo reservado. ${askDeliveryText(st.producto)}`);
+    } else if (st.step === 'ask_dni') {
+      await send(wa, `Sí, te lo tengo reservado. Pasame tu DNI (solo números) así lo dejo listo para la entrega 🙌`);
     } else {
       await send(wa, `Sí, esa reserva está a tu nombre. El equipo de LO QUIERO te confirma lo que sigue 💚`);
     }
