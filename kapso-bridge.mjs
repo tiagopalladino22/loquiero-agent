@@ -458,56 +458,50 @@ async function guardarDatosEntrega({ wa, sku, punto, dni }) {
   log({ type: 'guardar_datos_entrega', wa, sku, punto: punto || null, dni: dni ? 'set' : null, code: r.code, out: r.out, err: r.err });
   try { return JSON.parse(r.out); } catch { return { ok: false, reason: 'error', error: r.err || r.out }; }
 }
+// Politica actual (2026-09-03): NO gateamos la compra por el OCR. Todo comprobante se
+// acepta (al cliente siempre le decimos que sí) y queda como 'dudoso' = "a revisar" en el
+// ops center, para que el equipo lo confirme a mano. Así la compra nunca se traba si el
+// OCR falla. La lectura del OCR se corre igual (best-effort) y se guarda como ayuda.
 async function verificarComprobante(payload, wa, st) {
+  const sku = st?.producto?.sku;
+  const precio = st?.producto?.precio;
+  const successMsg = 'Comprobante recibido, muchas gracias por tu compra, mañana te vamos a contactar para confirmar la fecha de entrega';
+  // Sin producto/compra asociada no hay a qué atar el comprobante: solo agradecemos.
+  if (!sku) { await send(wa, successMsg); return; }
+
   const mediaId = mediaIdFrom(payload);
-  if (!st?.producto?.sku || !st?.producto?.precio) {
-    await send(wa, 'Recibimos el comprobante. El equipo lo revisa y te confirma la entrega 💚');
-    return;
+  let fotoUrl = null, v = null, recipients = '';
+  if (mediaId) {
+    try {
+      mkdirSync('/opt/data/loquiero-agent/receipts', { recursive: true });
+      const imgPath = `/opt/data/loquiero-agent/receipts/${wa}-${mediaId}.jpg`;
+      const dl = await sh('node', ['/opt/data/loquiero-agent/tools/kapso-download-media.mjs', mediaId, imgPath, PHONE_NUMBER_ID]);
+      log({ type: 'download_receipt', mediaId, wa, code: dl.code, err: dl.err.slice(0, 500) });
+      if (dl.code === 0) {
+        fotoUrl = await uploadComprobante(imgPath, wa, mediaId);
+        recipients = await getRecipients();
+        const ocr = await sh('uv', ['run', '--with', 'rapidocr-onnxruntime', '--with', 'pillow', 'python', '/opt/data/loquiero-agent/tools/ocr-receipt.py', imgPath, String(precio || ''), todayArgentina(), recipients]);
+        log({ type: 'ocr_receipt', mediaId, wa, code: ocr.code, out: ocr.out.slice(0, 3000), err: ocr.err.slice(0, 1000) });
+        try { v = JSON.parse(ocr.out); } catch {}
+      }
+    } catch (e) {
+      log({ type: 'receipt_process_error', wa, error: String(e?.stack || e) });
+    }
   }
-  if (!mediaId) {
-    await send(wa, 'Recibimos el comprobante. El equipo lo revisa y te confirma la entrega 💚');
-    return;
-  }
-  mkdirSync('/opt/data/loquiero-agent/receipts', { recursive: true });
-  const imgPath = `/opt/data/loquiero-agent/receipts/${wa}-${mediaId}.jpg`;
-  const dl = await sh('node', ['/opt/data/loquiero-agent/tools/kapso-download-media.mjs', mediaId, imgPath, PHONE_NUMBER_ID]);
-  log({ type: 'download_receipt', mediaId, wa, code: dl.code, out: dl.out, err: dl.err });
-  if (dl.code !== 0) {
-    await send(wa, 'Recibimos el comprobante. El equipo lo revisa y te confirma la entrega 💚');
-    return;
-  }
-  const expectedDate = todayArgentina();
-  const recipients = await getRecipients(); // titular/CVU del metodo de pago activo
-  const ocr = await sh('uv', ['run', '--with', 'rapidocr-onnxruntime', '--with', 'pillow', 'python', '/opt/data/loquiero-agent/tools/ocr-receipt.py', imgPath, String(st.producto.precio), expectedDate, recipients]);
-  log({ type: 'ocr_receipt', mediaId, wa, code: ocr.code, out: ocr.out.slice(0, 3000), err: ocr.err.slice(0, 1000) });
-  let v = null; try { v = JSON.parse(ocr.out); } catch {}
-  // Aprobacion: SOLO monto correcto + nombre del titular coincide. No se chequea el estado
-  // de la transferencia (varia entre bancos) ni la fecha ni el alias/CVU.
-  const aprobado = !!(v && v.amount_ok && v.recipient_ok);
-  // Subir la foto del comprobante y registrar la lectura contra la compra (foto + OCR + estado).
-  const fotoUrl = await uploadComprobante(imgPath, wa, mediaId);
+  // Guardamos foto + lectura del OCR. `aprobado` queda como referencia (lo que habría dado
+  // el chequeo monto+nombre), pero NO cambia el flujo: siempre entra como 'dudoso'.
   const ocrJson = {
-    aprobado,
-    esperado: { monto: st.producto.precio, titular: recipients },
+    aprobado: !!(v && v.amount_ok && v.recipient_ok),
+    esperado: { monto: precio, titular: recipients },
     leido: v,
   };
-  if (aprobado) {
-    await marcarComprobante(wa, st.producto.sku, 'aprobado', fotoUrl, ocrJson);
-    const sold = await marcarVendido(st.producto.sku, wa);
-    const state = loadState();
-    state[wa] = { ...(state[wa] || {}), step: sold?.ok ? 'sold_receipt' : 'payment_received_needs_manual_sale', receipt: v, sold };
-    saveState(state);
-    if (sold?.ok) {
-      await send(wa, 'Comprobante recibido, muchas gracias por tu compra, mañana te vamos a contactar para confirmar la fecha de entrega');
-    } else {
-      await send(wa, 'Comprobante recibido. El equipo termina de confirmarlo y te contacta por la entrega 💚');
-    }
-  } else {
-    // Comprobante dudoso: queda marcado para revision manual desde el ops center (Compras),
-    // y el producto pasa a "vendido" (comprobante recibido) para no auto-liberarse.
-    await marcarComprobante(wa, st.producto.sku, 'dudoso', fotoUrl, ocrJson);
-    await send(wa, `Recibimos el comprobante, pero no pudimos validar todos los datos automáticamente. El equipo lo revisa y te confirma 💚`);
-  }
+  // 'dudoso' = a revisar en el ops center; el RPC además pasa el producto a "vendido"
+  // (comprobante recibido) para sacarlo de la auto-liberación.
+  await marcarComprobante(wa, sku, 'dudoso', fotoUrl, ocrJson);
+  const state = loadState();
+  state[wa] = { ...(state[wa] || {}), step: 'receipt_pending_review', receipt: v };
+  saveState(state);
+  await send(wa, successMsg);
 }
 async function handle(payload, textOverride) {
   let { text, wa, hasMedia, event, profileName } = extract(payload);
