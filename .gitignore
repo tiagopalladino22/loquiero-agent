@@ -2,4 +2,15 @@
 .env.local
 node_modules/
 *.log
+__pycache__/
+*.pyc
+
+# Runtime/local production state (never commit)
+cloudflared.pid
+kapso-bridge.pid
+kapso-bridge.secret
+kapso-state.json
+public-url.txt
+receipts/
+
 vendor/kapso/adapter.py.bak.*

@@ -48,6 +48,48 @@ function mensajeInvitacion(codigo) {
   return `Hola, me quiero sumar al grupo de LO QUIERO, me invitaron con este codigo: ${codigo}`;
 }
 
+function codeBase(nombre) {
+  return String(nombre || "CLIENTE")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 12)
+    .toUpperCase() || "CLIENTE";
+}
+
+async function codeExists(codigo) {
+  const qs = new URLSearchParams({ select: "id", codigo: `eq.${codigo}`, limit: "1" });
+  const res = await fetch(`${url}/rest/v1/clientes?${qs}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function fixNumericCodeIfNeeded(json) {
+  if (!/^\d+$/.test(String(json.codigo || ""))) return json;
+  const base = codeBase(json.nombre);
+  let codigo = null;
+  for (let i = 0; i < 100; i++) {
+    const n = (Math.floor(Math.random() * 90) + 10).toString();
+    const candidate = `${base}${n}`;
+    if (!(await codeExists(candidate))) { codigo = candidate; break; }
+  }
+  if (!codigo) return json;
+  const qs = new URLSearchParams({ wa_user_id: `eq.${wa}` });
+  const res = await fetch(`${url}/rest/v1/clientes?${qs}`, {
+    method: "PATCH",
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({ codigo }),
+  });
+  if (res.ok) json.codigo = codigo;
+  return json;
+}
+
 try {
   const res = await fetch(`${url}/rest/v1/rpc/mi_link`, {
     method: "POST",
@@ -72,6 +114,7 @@ try {
     out({ ok: true, elegible: false, nombre: json.nombre, compras: json.compras, minimo: json.minimo, faltan: json.faltan });
     process.exit(0);
   }
+  await fixNumericCodeIfNeeded(json);
   const mensaje = mensajeInvitacion(json.codigo);
   const botWa = String(json.bot_wa || "").replace(/[^\d]/g, "");
   const link = botWa
