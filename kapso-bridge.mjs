@@ -138,6 +138,21 @@ async function buscarCliente(wa) {
     return Array.isArray(rows) && rows.length ? { existe: true, nombre: rows[0].nombre, codigo: rows[0].codigo } : { existe: false };
   } catch (e) { log({ type: 'buscar_cliente_error', wa, error: String(e?.message || e) }); return { existe: false }; }
 }
+// Busca un producto por codigo/sku/shein_code y devuelve su ficha (descripcion + atributos)
+// para que el bot pueda responder consultas de material/composicion/etc con datos reales.
+async function fichaProducto(codigo) {
+  try {
+    const c = encodeURIComponent(String(codigo || '').trim());
+    if (!c) return null;
+    const or = `or=(sku.ilike.${c},codigo.ilike.${c},shein_code.ilike.${c})`;
+    const res = await fetch(`${SUPA_URL}/rest/v1/productos?${or}&select=sku,descripcion,color,talle,atributos&limit=1`, {
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  } catch (e) { log({ type: 'ficha_producto_error', codigo, error: String(e?.message || e) }); return null; }
+}
 
 // Sube la foto del comprobante (ya descargada localmente) al bucket publico de Storage y
 // devuelve la URL publica, o null si falla (best-effort).
@@ -253,10 +268,22 @@ function knowledgeBase() {
 
 // Arma el prompt para el modelo: base de conocimiento + el mensaje del cliente como DATO
 // (no como instruccion), con guardas contra inyeccion. El modelo solo devuelve el texto.
-function buildBrainPrompt(userText, st) {
+// Arma el bloque de ficha tecnica (material, composicion, etc.) a partir de un producto,
+// para que el LLM responda esas consultas con datos reales y no invente.
+function fichaText(f) {
+  if (!f) return '';
+  const at = f.atributos && typeof f.atributos === 'object' ? f.atributos : null;
+  const lineas = at ? Object.entries(at).map(([k, v]) => `- ${k}: ${v}`).join('\n') : '';
+  if (!lineas) return '';
+  const nombre = [f.sku, f.descripcion].filter(Boolean).join(' ');
+  return `FICHA TECNICA del producto${nombre ? ` (${nombre})` : ''} (datos REALES de SHEIN; para consultas de material/composicion/tela/temporada/cuidado respondé SOLO con esto, no inventes):\n${lineas}`;
+}
+function buildBrainPrompt(userText, st, ficha) {
   const kb = knowledgeBase();
   const estado = st?.step ? `Contexto: el cliente esta en el paso "${st.step}".` : '';
   const prod = st?.producto ? `Producto en juego: ${productoDesc(st.producto)}${st.producto.precio ? `, $${money(st.producto.precio)}` : ''}.` : '';
+  // Ficha: la explicita (consulta por codigo) o, si no, la del producto en juego.
+  const fichaBlock = fichaText(ficha || (st?.producto?.atributos ? st.producto : null));
   const hist = Array.isArray(st?.history) ? st.history.slice(-6) : [];
   const histText = hist
     .map((h) => `${h.role === 'user' ? 'Cliente' : 'LO QUIERO'}: ${String(h.text || '').slice(0, 400)}`)
@@ -272,7 +299,7 @@ function buildBrainPrompt(userText, st) {
     '- [[MI_LINK]] -> para CUALQUIER cosa sobre SU PROPIO link de referido o si EL ya puede tenerlo: pedirlo, aceptar que se lo generes, o preguntar si necesita compras / como lo consigue / si ya esta habilitado (ej "dale pasamelo", "quiero mi link", "necesito comprar para tener mi link?", "puedo tener el link ya?"). MUY IMPORTANTE: NO decidas vos si necesita compras o no, ni le digas cuantas le faltan; eso lo resuelve la herramienta, porque este cliente puede estar habilitado aunque no tenga compras (puede tener el nivel forzado). Solo si pregunta como funciona o cuanto se gana el programa EN GENERAL (no sobre su propio link), explicá sin el token.',
     '- [[CANCELAR]] -> si quiere cancelar/liberar SU reserva o pedido (ej "lo quiero liberar", "liberalo", "soltalo", "al final no", "ya no lo quiero", "dejalo"). OJO: si dice que quiere OTRO producto, eso NO es cancelar.',
     'NO inicies vos el flujo de compra/pago (elegir punto de entrega, pasar el CVU, pedir el comprobante): eso es AUTOMATICO y solo pasa despues de que la persona reserva un producto con "LO QUIERO" + el codigo. Si alguien pregunta por los puntos, precios o como comprar SIN haber reservado (por curiosidad), respondé como INFO y NO le pidas que elija un punto ni le ofrezcas datos para transferir. Si quiere comprar algo, decile que te mande "LO QUIERO" + el codigo del producto.',
-    estado, prod,
+    estado, prod, fichaBlock,
     `<<<\n${histText}\nCliente: ${String(userText || '').slice(0, 1500)}\n>>>`,
     'Escribi SOLO la respuesta de WhatsApp al ultimo mensaje del cliente:',
   ].filter(Boolean).join('\n');
@@ -292,9 +319,9 @@ function hermesOneshot(prompt, timeoutMs = 45000) {
   });
 }
 
-async function llmReply(userText, wa, st) {
+async function llmReply(userText, wa, st, ficha) {
   try {
-    const r = await hermesOneshot(buildBrainPrompt(userText, st));
+    const r = await hermesOneshot(buildBrainPrompt(userText, st, ficha));
     const out = String(r.out || '').trim();
     if (r.code === 0 && out) {
       log({ type: 'llm_reply', wa, text: userText, reply: out.slice(0, 500) });
@@ -398,6 +425,12 @@ function wantsMyLink(text) {
 function wantsCancel(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return /(no lo quiero|ya no lo quiero|no lo quiero mas|no lo voy a comprar|cancelar|cancelame|cancelo|cancela la compra|anular|anulame|dar de baja|me arrepenti|al final no|mejor no|dejalo|liberar|liberalo|liberame|soltalo|sacalo|borralo|daselo a otro|que se lo lleve otro|desisti|sacame de la fila|bajame de la lista|no me anotes|sacame de la espera)/.test(t);
+}
+// Detecta una consulta sobre la ficha del producto (material/composicion/tela/etc.) para
+// responderla con datos reales, sin dispararla como reserva.
+function esConsultaFicha(text) {
+  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /(material|composici|de que (tela|material|genero)|que tela|algod|poliest|elastic|elastan|transparent|temporada|se lava|lavad|lavar|encoge|abriga|abrigad|grosor|talle real|es fino|es grueso|es calentito|tipo de tela)/.test(t);
 }
 function wantsHuman(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -605,6 +638,22 @@ async function handle(payload, textOverride) {
   if (st.step === 'awaiting_payment' && /(disponible|reservad|sigue|pagar|pago|transfer)/i.test(text)) {
     await send(wa, `Sí, tranqui, lo tenemos reservado para vos. Mandanos el comprobante cuando puedas 🙌`);
     return { ok: true };
+  }
+
+  // Consulta sobre la ficha (material/composicion/tela/etc.): respondé con datos reales del
+  // producto (el del hilo o el del codigo mencionado), sin reservar. Va antes de la reserva
+  // para que "de que material es el B03?" no reserve el B03.
+  if (esConsultaFicha(text)) {
+    const cod = codigoFrom(text);
+    let ficha = cod ? await fichaProducto(cod) : null;
+    if (!ficha && st?.producto?.atributos) ficha = st.producto;
+    const reply = await llmReply(text, wa, st, ficha);
+    if (/\[\[\s*mi_?link\s*\]\]/i.test(reply)) return replyMiLink(wa, state, st);
+    if (/\[\[\s*cancelar\s*\]\]/i.test(reply)) return replyCancelar(wa, state, st);
+    await send(wa, reply);
+    st.history = (st.history || []).concat({ role: 'bot', text: reply }).slice(-8);
+    state[wa] = st; saveState(state);
+    return { ok: true, llm: true, ficha: !!ficha };
   }
 
   const codigo = codigoFrom(text);
