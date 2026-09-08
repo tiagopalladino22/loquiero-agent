@@ -624,7 +624,12 @@ async function handle(payload, textOverride) {
     const j = await reservar(codigo, wa);
     if (j.ok) {
       st.step = 'ask_delivery'; st.lastCodigo = codigo; st.producto = j; state[wa] = st; saveState(state);
-      await send(wa, `Listo, te lo reservé! 🛍️ ${productoDesc(j)}, $${money(j.precio)}. ${askDeliveryText(j)}`);
+      // Si el cliente tiene crédito, el precio ya viene descontado (j.precio) y le avisamos.
+      const aplicado = Number(j.credito_aplicado || 0);
+      const precioTxt = aplicado > 0
+        ? `Salía $${money(j.precio_original)}, pero tenés $${money(aplicado)} de crédito así que pagás $${money(j.precio)} 🙌`
+        : `$${money(j.precio)}.`;
+      await send(wa, `Listo, te lo reservé! 🛍️ ${productoDesc(j)}. ${precioTxt} ${askDeliveryText(j)}`);
     } else if (j.reason === 'reservado') {
       if (j.mensaje_fila) await send(wa, j.mensaje_fila);
       else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
