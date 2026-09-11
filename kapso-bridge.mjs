@@ -36,8 +36,57 @@ function sh(cmd, args, opts = {}) {
 }
 async function send(to, text) {
   const r = await sh('npx', ['-y', '@kapso/cli', 'whatsapp', 'messages', 'send', '--phone-number-id', PHONE_NUMBER_ID, '--to', String(to), '--text', text, '--output', 'json']);
+  // Guardamos el id del mensaje que manda el bot, para despues distinguir un saliente
+  // "del bot" de uno "de un humano" (handoff, ver pausaHumanaHasta).
+  try { const d = JSON.parse(r.out); const id = d?.messages?.[0]?.id; if (id) recordBotSent(id); } catch {}
   log({ type: 'send', to, text, code: r.code, out: r.out.slice(0, 1000), err: r.err.slice(0, 1000) });
   return r;
+}
+
+// ── Handoff a humano: si un humano contesta desde el mismo numero, el bot se calla 24h ──
+// El numero lo opera tambien un humano (inbox de Kapso). Cuando aparece un mensaje SALIENTE
+// que el bot NO mando, asumimos que lo escribio una persona y el bot deja de participar de
+// esa conversacion por 24h (ventana rodante desde el ultimo mensaje del humano).
+const START_TS = Date.now();
+const HUMAN_PAUSE_MS = 24 * 60 * 60 * 1000;
+const _botSent = new Set();           // ids de mensajes que mando el bot
+function recordBotSent(id) {
+  _botSent.add(id);
+  if (_botSent.size > 3000) _botSent.delete(_botSent.values().next().value);
+}
+const _msgCache = { t: 0, data: null };
+const MSG_CACHE_MS = 20000;           // no listamos mas de 1 vez cada 20s
+async function listMensajesCache() {
+  if (_msgCache.data && Date.now() - _msgCache.t < MSG_CACHE_MS) return _msgCache.data;
+  const r = await sh('npx', ['-y', '@kapso/cli', 'whatsapp', 'messages', 'list', '--phone-number-id', PHONE_NUMBER_ID, '--output', 'json']);
+  let data = null; try { data = JSON.parse(r.out); } catch {}
+  _msgCache.t = Date.now(); _msgCache.data = data;
+  return data;
+}
+function _num(v) { return String(v || '').replace(/\D/g, ''); }
+function _ts(m) { let t = Number(m?.timestamp || m?.kapso?.timestamp || 0); if (t && t < 1e12) t *= 1000; return t; }
+// Devuelve el timestamp (ms) hasta el que el bot debe callarse para `wa`, o 0 si no hay
+// intervencion humana vigente. Solo cuenta salientes DESPUES del arranque del bridge (para
+// no confundir mensajes viejos del bot con humanos en el cold-start).
+async function pausaHumanaHasta(wa) {
+  try {
+    const data = await listMensajesCache();
+    const msgs = (data && data.data) || [];
+    let lastHuman = 0;
+    for (const m of msgs) {
+      const k = m.kapso || {};
+      if (k.direction !== 'outbound') continue;
+      const ts = _ts(m);
+      if (!ts || ts < START_TS - 5000) continue;      // ignora salientes previos al arranque
+      // El numero del cliente puede venir en distintos campos segun Kapso: matcheamos contra
+      // todos (para un saliente, wa suele estar en to/contact/phone_number).
+      const nums = [k.phone_number, k.contact_phone, k.customer_phone, m.to, m.from, m.recipient].map(_num).filter(Boolean);
+      if (!nums.includes(wa)) continue;                // otra conversacion
+      if (m.id && _botSent.has(m.id)) continue;        // lo mando el bot, no un humano
+      if (ts > lastHuman) lastHuman = ts;
+    }
+    return lastHuman ? lastHuman + HUMAN_PAUSE_MS : 0;
+  } catch (e) { log({ type: 'pausa_humana_error', wa, error: String(e?.message || e) }); return 0; }
 }
 function walk(obj, pred, out = []) {
   if (!obj || typeof obj !== 'object') return out;
@@ -542,6 +591,14 @@ async function handle(payload, textOverride) {
   if (textOverride != null) text = textOverride;
   log({ type: 'incoming', event, wa, text, hasMedia, batched: textOverride != null, payload });
   if (!wa) return { ok: false, reason: 'no_wa' };
+
+  // Handoff: si un humano ya contesto en esta conversacion, el bot no participa por 24h.
+  const pausaHasta = await pausaHumanaHasta(wa);
+  if (pausaHasta && Date.now() < pausaHasta) {
+    log({ type: 'human_paused', wa, until: new Date(pausaHasta).toISOString() });
+    return { ok: true, human_paused: true };
+  }
+
   const state = loadState();
   const st = state[wa] || {};
 
