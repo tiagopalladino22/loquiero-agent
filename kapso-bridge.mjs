@@ -277,8 +277,9 @@ function deliveryPointLines(producto) {
 }
 function askDeliveryText(producto) {
   const lines = deliveryPointLines(producto);
-  if (lines.length === 0) return 'El equipo te coordina el punto de entrega por privado 🙌';
-  return `¿Por cuál punto preferís retirar?\n${lines.join('\n')}`;
+  const entrega = 'Las entregas las hacemos 2 veces por semana (martes y viernes).';
+  if (lines.length === 0) return `${entrega} El equipo te coordina el punto de retiro por privado 🙌`;
+  return `${entrega}\nA continuación te envío nuestros puntos de retiro gratuitos:\n${lines.join('\n')}\n¿Por cuál preferís retirar?`;
 }
 function norm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -735,7 +736,9 @@ async function handle(payload, textOverride) {
       const precioTxt = aplicado > 0
         ? `Salía $${money(j.precio_original)}, pero tenés $${money(aplicado)} de crédito así que pagás $${money(j.precio)} 🙌`
         : `$${money(j.precio)}.`;
-      await send(wa, `Listo, te lo reservé! 🛍️ ${productoDesc(j)}. ${precioTxt} ${askDeliveryText(j)}`);
+      // Solo el código (no el nombre completo) para que el mensaje no quede largo.
+      const codReserva = String(j.sku || codigo).toUpperCase();
+      await send(wa, `Listo, reservé el ${codReserva}! 🛍️ ${precioTxt} Te lo dejo reservado por 30 minutos ⏳ ${askDeliveryText(j)}`);
     } else if (j.reason === 'reservado') {
       if (j.mensaje_fila) await send(wa, j.mensaje_fila);
       else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
