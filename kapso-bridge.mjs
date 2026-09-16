@@ -459,46 +459,10 @@ async function replyMiLink(wa, state, st) {
   return { ok: true };
 }
 
-function faqAnswer(text) {
-  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  if (/\b(que es|qu[eé] es|como funciona|info|informacion)\b/.test(t) && /lo quiero|ropa|tienda|esto|funciona/.test(t)) {
-    return 'LO QUIERO es ropa nueva con etiqueta a precio de feria, hasta 30% menos que las páginas oficiales. Pasanos “LO QUIERO” + el código y te reservamos 💚';
-  }
-  if (/\b(nuevo|nuevos|usado|usados|etiqueta)\b/.test(t)) {
-    return 'Sí, son productos nuevos con etiqueta 🙌';
-  }
-  if (/(reservar|reserva).*(despues|luego|mas tarde)|pagar.*(despues|luego|mas tarde)/.test(t)) {
-    return 'No, la compra se cierra con el pago.';
-  }
-  if (/(cuanto|tiempo|hasta cuando|vence|pagar|pago|compra|reserv)/.test(t) && /(tiempo|pagar|pago|compra|reserv|vence|cuando)/.test(t)) {
-    return 'Tenés entre 20 y 25 minutos para pagar. Si hay cola y se vence, pasa al siguiente de la fila 🙌';
-  }
-  if (/(donde|d[oó]nde).*(retiro|retirar)|direccion|direcci[oó]n|punto/.test(t)) {
-    return 'Elegís tu punto en el privado; la dirección exacta te llega al confirmar.';
-  }
-  if (/(cuando|cu[aá]ndo).*(retiro|retirar|entrega)|\bretiro\b|\bretirar\b/.test(t)) {
-    return 'Los martes abastecemos los puntos; te avisamos cuando esté listo. Tenés hasta un mes para retirarlo.';
-  }
-  if (/(envio|envío|envian|mandan).*(cuanto|cuesta|precio|sale)|\benvio\b|\benvío\b/.test(t)) {
-    return 'El envío no cuesta nada, está incluido 🙌';
-  }
-  if (/(otro|otra|hay).*(talle|color)|talle|color/.test(t)) {
-    return 'Cada producto es único, lo que ves es lo que hay.';
-  }
-  if (/(devolucion|devoluciones|devolver)/.test(t)) {
-    return 'No hay devoluciones. Por eso mirá bien las fotos y el talle antes de cerrar.';
-  }
-  if (/(revender|reventa|afiliad|ganar|comision|comisión)/.test(t)) {
-    return 'Sí, hay programa de afiliados; te paso la info por privado.';
-  }
-  if (/(horario|hora|cuando publican|publicacion|publicaci[oó]n|suben ropa|suben productos)/.test(t)) {
-    return 'Publicamos lunes a viernes 11, 14 y 19 hs; sábados y domingos 11 y 16 hs.';
-  }
-  if (/(fecha exacta|reclamo|cambio|cambiar|estado.*pago|pago.*estado|confirmaron|confirmar pago|problema|error)/.test(t)) {
-    return 'El equipo de LO QUIERO te lo confirma por privado.';
-  }
-  return null;
-}
+// (Se eliminó `faqAnswer`: matcher de respuestas fijas que ya no se llamaba desde ningún
+// lado y tenía datos viejos (30% en vez de 50%, 20-25 min en vez de 30, retiro "martes...
+// hasta un mes"). Las preguntas fuera del flujo las responde el cerebro (llmReply) con la
+// base de conocimiento de PLATFORM_HINT.md, que es la fuente única.)
 function wantsGroup(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return /(sumarme|entrar|ingresar|agregar|alta|anotar|grupo|me invitaron|link)/.test(t) && /(grupo|lo quiero|sumarme|entrar|invitaron|agregar|alta|anotar)/.test(t);
