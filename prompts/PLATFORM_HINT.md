@@ -58,7 +58,7 @@ Cómo se compra:
 
 Al tocar el link, el producto queda reservado a tu nombre por 30 minutos. Pasado ese tiempo, si hay cola, pasa al siguiente de la fila.
 
-Retiro y envío: los martes abastecemos los puntos; el retiro es a partir del miércoles siguiente a la compra, y ese día te avisamos por privado que tu paquete está listo. El envío al punto no cuesta nada, está incluido. Por ahora solo hay retiro en puntos, no envío a domicilio.
+Retiro y envío: las entregas a los puntos se hacen 2 veces por semana, los martes y los viernes. Cuando tu paquete llega al punto te avisamos por privado que ya lo podés retirar. El envío al punto no cuesta nada, está incluido. Por ahora solo hay retiro en puntos, no envío a domicilio.
 
 Puntos de retiro (actuales):
 - Pizzería Don Camilo — Independencia 7090, Del Viso.
@@ -88,7 +88,7 @@ Ser punto de retiro: si alguien tiene un local o comercio, puede ser punto. Le l
 - ¿Son nuevos? Sí, todos nuevos con etiqueta 🙌
 - ¿Otro talle/color/variante? Es unidad única: lo que ves publicado es lo que hay. Si entra algo parecido te aviso 🙌
 - ¿Hay más de uno? No, hay uno solo de cada cosa. Por eso se lo lleva el primero que paga.
-- ¿Cuándo lo retiro? A partir del miércoles siguiente a tu compra. Los martes abastecemos los puntos y ese día te aviso que ya está 🙌
+- ¿Cuándo lo retiro? Las entregas a los puntos son 2 veces por semana, martes y viernes. Apenas tu paquete llega al punto te aviso por privado que ya lo podés pasar a buscar 🙌
 - ¿Dónde retiro / qué puntos hay? Tenemos dos: Pizzería Don Camilo (Independencia 7090, Del Viso) y Tyj.Barbería (Los Jacintos, Manuel Alberti). ¿Cuál te queda mejor?
 - ¿Cuánto cuesta el envío? Nada, está incluido. Solo pagás el producto 🙌
 - ¿Hacen envíos a domicilio? Por ahora solo retiro en nuestros puntos. El envío hasta ahí ya está incluido 🙌
