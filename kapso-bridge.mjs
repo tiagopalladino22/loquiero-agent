@@ -284,6 +284,20 @@ function askDeliveryText(producto) {
 function norm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
+// \u00bfEl mensaje parece una duda/charla (y no el dato que estamos pidiendo, ej un DNI o un punto)?
+// Sirve para no repetir el pedido en loop: si es una pregunta, mejor que conteste el cerebro.
+function pareceDuda(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (t.includes('?') || t.includes('\u00bf')) return true;
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.length >= 3 && /[a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]/i.test(t);
+}
+// \u00bfEl texto es un intento de escribir un n\u00famero (DNI) aunque est\u00e9 mal formateado?
+function esIntentoNumero(text) {
+  const t = String(text || '').trim();
+  return !!t && /^[\d.\s\-]+$/.test(t);
+}
 function matchDeliveryPoint(text, producto) {
   const puntos = Array.isArray(producto?.puntos) ? producto.puntos : [];
   if (puntos.length === 1) return puntos[0];
@@ -328,7 +342,7 @@ function fichaText(f) {
   const nombre = [f.sku, f.descripcion].filter(Boolean).join(' ');
   return `FICHA TECNICA del producto${nombre ? ` (${nombre})` : ''} (datos REALES de SHEIN; para consultas de material/composicion/tela/temporada/cuidado respondé SOLO con esto, no inventes):\n${lineas}`;
 }
-function buildBrainPrompt(userText, st, ficha) {
+function buildBrainPrompt(userText, st, ficha, extraHint) {
   const kb = knowledgeBase();
   const estado = st?.step ? `Contexto: el cliente esta en el paso "${st.step}".` : '';
   const prod = st?.producto ? `Producto en juego: ${productoDesc(st.producto)}${st.producto.precio ? `, $${money(st.producto.precio)}` : ''}.` : '';
@@ -349,7 +363,7 @@ function buildBrainPrompt(userText, st, ficha) {
     '- [[MI_LINK]] -> para CUALQUIER cosa sobre SU PROPIO link de referido o si EL ya puede tenerlo: pedirlo, aceptar que se lo generes, o preguntar si necesita compras / como lo consigue / si ya esta habilitado (ej "dale pasamelo", "quiero mi link", "necesito comprar para tener mi link?", "puedo tener el link ya?"). MUY IMPORTANTE: NO decidas vos si necesita compras o no, ni le digas cuantas le faltan; eso lo resuelve la herramienta, porque este cliente puede estar habilitado aunque no tenga compras (puede tener el nivel forzado). Solo si pregunta como funciona o cuanto se gana el programa EN GENERAL (no sobre su propio link), explicá sin el token.',
     '- [[CANCELAR]] -> si quiere cancelar/liberar SU reserva o pedido (ej "lo quiero liberar", "liberalo", "soltalo", "al final no", "ya no lo quiero", "dejalo"). OJO: si dice que quiere OTRO producto, eso NO es cancelar.',
     'NO inicies vos el flujo de compra/pago (elegir punto de entrega, pasar el CVU, pedir el comprobante): eso es AUTOMATICO y solo pasa despues de que la persona reserva un producto con "LO QUIERO" + el codigo. Si alguien pregunta por los puntos, precios o como comprar SIN haber reservado (por curiosidad), respondé como INFO y NO le pidas que elija un punto ni le ofrezcas datos para transferir. Si quiere comprar algo, decile que te mande "LO QUIERO" + el codigo del producto.',
-    estado, prod, fichaBlock,
+    estado, prod, fichaBlock, extraHint || '',
     `<<<\n${histText}\nCliente: ${String(userText || '').slice(0, 1500)}\n>>>`,
     'Escribi SOLO la respuesta de WhatsApp al ultimo mensaje del cliente:',
   ].filter(Boolean).join('\n');
@@ -369,9 +383,9 @@ function hermesOneshot(prompt, timeoutMs = 45000) {
   });
 }
 
-async function llmReply(userText, wa, st, ficha) {
+async function llmReply(userText, wa, st, ficha, extraHint) {
   try {
-    const r = await hermesOneshot(buildBrainPrompt(userText, st, ficha));
+    const r = await hermesOneshot(buildBrainPrompt(userText, st, ficha, extraHint));
     const out = String(r.out || '').trim();
     if (r.code === 0 && out) {
       log({ type: 'llm_reply', wa, text: userText, reply: out.slice(0, 500) });
@@ -383,6 +397,32 @@ async function llmReply(userText, wa, st, ficha) {
   }
   // Fallback determinista si el modelo no responde (nunca dejar sin respuesta).
   return 'Te leemos 🙌 Escribinos “LO QUIERO” y el código de la prenda para reservarla, o preguntame lo que necesites.';
+}
+
+// Contesta con el cerebro (LLM de Hermes) y ejecuta los tokens de accion que pueda emitir
+// ([[MI_LINK]]/[[CANCELAR]]). Reusado por la rama de ficha y por los pasos del flujo (DNI/
+// punto) cuando el cliente hace una pregunta en vez de dar el dato. `extraHint` le da al
+// modelo la instruccion puntual del paso (ej "te falta el DNI, recordaselo").
+async function responderCerebro(text, wa, state, st, { ficha = null, extraHint = '' } = {}) {
+  const reply = await llmReply(text, wa, st, ficha, extraHint);
+  if (/\[\[\s*mi_?link\s*\]\]/i.test(reply)) return replyMiLink(wa, state, st);
+  if (/\[\[\s*cancelar\s*\]\]/i.test(reply)) return replyCancelar(wa, state, st);
+  await send(wa, reply);
+  st.history = (st.history || []).concat({ role: 'bot', text: reply }).slice(-8);
+  state[wa] = st; saveState(state);
+  return { ok: true, llm: true };
+}
+// Deriva a un humano cuando el bot no puede avanzar (ej el cliente insiste con dudas en medio
+// del flujo de compra). Le pasa el link de atencion y limpia el contador de "trabas".
+async function derivarHumano(wa, state, st, motivo) {
+  const j = await humanoLink().catch(() => ({}));
+  const msg = `Mejor te paso con alguien del equipo así te ayuda bien con esto 🙌 ${j.link || HUMANO_LINK}`;
+  await send(wa, msg);
+  st.stuck = 0;
+  st.history = (st.history || []).concat({ role: 'bot', text: msg }).slice(-8);
+  state[wa] = st; saveState(state);
+  log({ type: 'derivar_humano', wa, motivo: motivo || null, step: st.step || null });
+  return { ok: true, escalated: true };
 }
 
 // Ejecuta la tool cancelar (libera la reserva del cliente y avanza la fila). Reusado por la
@@ -549,8 +589,10 @@ async function verificarComprobante(payload, wa, st) {
   const sku = st?.producto?.sku;
   const precio = st?.producto?.precio;
   const successMsg = 'Comprobante recibido, muchas gracias por tu compra, mañana te vamos a contactar para confirmar la fecha de entrega';
-  // Sin producto/compra asociada no hay a qué atar el comprobante: solo agradecemos.
-  if (!sku) { await send(wa, successMsg); return; }
+  // Sin producto/compra asociada no hay a qué atar el comprobante (no debería pasar: solo
+  // llegamos acá si estábamos esperando el pago de una reserva). No confirmamos una compra
+  // que no existe.
+  if (!sku) { await send(wa, 'Recibí tu imagen 🙌 Si es un comprobante, primero reservá la prenda con “LO QUIERO” + el código así lo puedo asociar a tu compra.'); return; }
 
   const mediaId = mediaIdFrom(payload);
   let fotoUrl = null, v = null, recipients = '';
@@ -606,9 +648,20 @@ async function handle(payload, textOverride) {
   if (hasMedia) {
     const mediaId = mediaIdFrom(payload);
     if (mediaId && st.lastMediaId === mediaId) return { ok: true, duplicate: true };
-    st.step = 'verifying_payment'; st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
-    verificarComprobante(payload, wa, st).catch(e => log({ type: 'receipt_error', wa, error: String(e?.stack || e) }));
-    return { ok: true, verifying: true };
+    // Solo tratamos una imagen como COMPROBANTE si el cliente ya reservó y le pedimos el pago
+    // (o acabamos de recibir uno). Si manda una foto en cualquier otro momento (ej la foto del
+    // producto que quiere), NO decimos "comprobante recibido": eso confunde. La ignoramos como
+    // comprobante y contestamos algo neutro.
+    const esperandoComprobante = (st.step === 'awaiting_payment' || st.step === 'receipt_pending_review') && st.producto?.sku;
+    if (esperandoComprobante) {
+      st.step = 'verifying_payment'; st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
+      verificarComprobante(payload, wa, st).catch(e => log({ type: 'receipt_error', wa, error: String(e?.stack || e) }));
+      return { ok: true, verifying: true };
+    }
+    st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
+    log({ type: 'media_no_comprobante', wa, step: st.step || null });
+    await send(wa, 'Vi tu imagen 🙌 Si querés reservar una prenda, escribime “LO QUIERO” y el código. Y si es el comprobante de una compra, mandámelo cuando te haya pasado el CVU para pagar. ¿Te ayudo con algo?');
+    return { ok: true, media_ignored: true };
   }
   // Historial para el cerebro: guardamos cada mensaje de texto del cliente (para que el LLM
   // entienda el hilo en los follow-ups). Los procesos por wa estan serializados, no hay race.
@@ -675,23 +728,41 @@ async function handle(payload, textOverride) {
       st.delivery = punto.nombre || String(punto);
       // Guardamos el punto elegido en la compra y pasamos a pedir el DNI (para la entrega).
       await guardarDatosEntrega({ wa, sku: st.producto?.sku, punto: st.delivery });
-      st.step = 'ask_dni'; state[wa] = st; saveState(state);
+      st.step = 'ask_dni'; st.stuck = 0; state[wa] = st; saveState(state);
       await send(wa, `Genial, ${st.delivery} 🙌 Pasame tu DNI (solo los números) así lo dejamos listo para la entrega.`);
-    } else {
-      await send(wa, askDeliveryText(st.producto));
+      return { ok: true };
     }
+    // No eligió un punto. Si parece una duda, que conteste el cerebro (en vez de repetir el
+    // menú en loop); si insiste sin avanzar, lo derivamos a un humano.
+    if (pareceDuda(text)) {
+      st.stuck = (st.stuck || 0) + 1; state[wa] = st; saveState(state);
+      if (st.stuck >= 3) return derivarHumano(wa, state, st, 'trabado_en_ask_delivery');
+      const hint = 'IMPORTANTE: el cliente YA reservó y falta que elija un PUNTO DE RETIRO para coordinar la entrega. Respondé lo que pregunta y, si viene al caso, recordale amablemente que elija uno de los puntos. Si pide hablar con una persona o son dudas que no podés resolver, decile que lo pasás con el equipo.';
+      return responderCerebro(text, wa, state, st, { extraHint: hint });
+    }
+    await send(wa, askDeliveryText(st.producto));
     return { ok: true };
   }
   if (st.step === 'ask_dni') {
     const dni = (String(text || '').match(/\d[\d.\s]{6,10}\d/) || [])[0]?.replace(/[.\s]/g, '') || '';
     if (dni.length >= 7 && dni.length <= 9) {
       await guardarDatosEntrega({ wa, sku: st.producto?.sku, dni });
-      st.dni = dni; st.step = 'awaiting_payment'; state[wa] = st; saveState(state);
+      st.dni = dni; st.step = 'awaiting_payment'; st.stuck = 0; state[wa] = st; saveState(state);
       await send(wa, `Perfecto 🙌 ${paymentText(st.producto)}`);
-    } else {
-      await send(wa, 'Pasame tu DNI con los números nada más (sin puntos), así lo cargo bien 🙌');
+      return { ok: true };
     }
-    return { ok: true };
+    // Escribió un número mal formateado (muy corto/largo): lo tratamos como intento y le
+    // pedimos que lo corrija (no cuenta como "traba").
+    if (esIntentoNumero(text)) {
+      await send(wa, 'Pasame tu DNI con los números nada más (sin puntos), así lo cargo bien 🙌');
+      return { ok: true };
+    }
+    // No es un DNI: es una pregunta/charla. En vez de repetir el pedido del DNI, que conteste
+    // el cerebro (recordándole el DNI); si insiste con dudas, lo derivamos a un humano.
+    st.stuck = (st.stuck || 0) + 1; state[wa] = st; saveState(state);
+    if (st.stuck >= 3) return derivarHumano(wa, state, st, 'trabado_en_ask_dni');
+    const hint = 'IMPORTANTE: para cerrar la compra necesitás que el cliente te pase su DNI (solo números) y así dejar lista la entrega. Respondé lo que pregunta y, si viene al caso, recordale amablemente que te falta el DNI. Si son dudas que no podés resolver o quiere hablar con una persona, decile que lo pasás con el equipo.';
+    return responderCerebro(text, wa, state, st, { extraHint: hint });
   }
   if (st.step === 'awaiting_payment' && /(disponible|reservad|sigue|pagar|pago|transfer)/i.test(text)) {
     await send(wa, `Sí, tranqui, lo tenemos reservado para vos. Mandanos el comprobante cuando puedas 🙌`);
