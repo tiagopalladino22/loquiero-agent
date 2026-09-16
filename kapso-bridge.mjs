@@ -7,7 +7,7 @@ const PHONE_NUMBER_ID = process.env.KAPSO_PHONE_NUMBER_ID || '1329393980246912';
 const BRIDGE_SECRET = process.env.KAPSO_BRIDGE_SECRET || '';
 const STATE_PATH = process.env.LOQUIERO_STATE_PATH || '/opt/data/loquiero-agent/kapso-state.json';
 const LOG_PATH = process.env.LOQUIERO_LOG_PATH || '/opt/data/loquiero-agent/kapso-bridge.log';
-const GRUPO_LINK = 'https://chat.whatsapp.com/EgEsQx5tQrqA8vkbxdIV36?mode=gi_t';
+const GRUPO_LINK = 'https://chat.whatsapp.com/EOoTDovtkE13KIOaU4ln8Z?s=cl&p=i&mlu=4&ilr=4';
 const HUMANO_LINK = 'https://wa.me/5491166568379';
 
 function log(obj) {
