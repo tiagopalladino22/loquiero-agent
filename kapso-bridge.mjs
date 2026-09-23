@@ -68,11 +68,22 @@ function msgLinkInfo(st, wa) {
 // Intencion de compra explicita: "LO QUIERO A10" / "quiero el A10" / "reservar A10", o el
 // codigo solo ("A10"). Una pregunta que menciona un codigo ("de que material es el B03?")
 // NO reserva.
+// Regla: hay un codigo completo (A28, b3, "A 28") y el mensaje expresa interes (quiero,
+// me interesa, reservar, comprar, dame, lo llevo, me lo quedo, ...) o es el codigo solo.
+// Se excluyen las preguntas informativas (material, talle, cuanto sale, hay stock, ...):
+// esas van al mensaje de info, no reservan.
 function codigoIntencionCompra(text) {
-  const upper = String(text || '').toUpperCase().trim();
-  let m = upper.match(/(?:LO\s*QUIERO|QUIERO|RESERV(?:AR|O|A)?)\s+(?:EL|LA)?\s*([A-Z]{1,4}\d{1,4})\b/);
-  if (!m) m = upper.match(/^(?:EL|LA)?\s*([A-Z]{1,4}\d{1,4})\s*[!.]*$/);
-  return m?.[1] || null;
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const t = norm(raw); // minusculas, sin tildes, sin puntuacion
+  const codes = [...raw.toUpperCase().matchAll(/\b([A-Z]{1,4})\s?(\d{1,4})\b/g)].map((m) => m[1] + m[2]);
+  if (!codes.length) return null;
+  // solo el codigo (con o sin "el/la", saludo o signos)
+  if (/^(?:hola|holis|buenas|buen dia|buenas tardes|buenas noches)?\s*(?:el|la)?\s*[a-z]{1,4}\s?\d{1,4}$/.test(t)) return codes[0];
+  const info = /\b(saber|material|composicion|tela|talle|talles|medida|medidas|mide|cuanto|cuanta|precio|sale|vale|cuesta|color|colores|foto|fotos|disponible|queda|quedan|hay|stock|cuando|donde|como|que es|sigue|todavia)\b/;
+  const intent = /\b(quiero|loquiero|reserv\w*|compr\w*|interes\w*|gusta\w*|encanta\w*|dame|damelo|llevo|quedo|tomo|agarro|pido|dale|apart\w*|guard\w*|separ\w*|mio|mia|va)\b/;
+  if (intent.test(t) && !info.test(t)) return codes[0];
+  return null;
 }
 
 function log(obj) {
