@@ -56,7 +56,7 @@ Cómo se compra:
 4. Te pasamos los datos para transferir.
 5. Transferís, mandás el comprobante y el producto es tuyo.
 
-Al tocar el link, el producto queda reservado a tu nombre por 30 minutos. Pasado ese tiempo, si hay cola, pasa al siguiente de la fila.
+Al tocar el link, el producto queda reservado a tu nombre por 15 minutos. Pasado ese tiempo, si hay cola, pasa al siguiente de la fila.
 
 Retiro y envío: las entregas a los puntos se hacen 2 veces por semana, los martes y los viernes. Cuando tu paquete llega al punto te avisamos por privado que ya lo podés retirar. El envío al punto no cuesta nada, está incluido. Por ahora solo hay retiro en puntos, no envío a domicilio.
 
@@ -95,9 +95,9 @@ Ser punto de retiro: si alguien tiene un local o comercio, puede ser punto. Le l
 - ¿Cuánto cuesta el envío? Nada, está incluido. Solo pagás el producto 🙌
 - ¿Hacen envíos a domicilio? Por ahora solo retiro en nuestros puntos. El envío hasta ahí ya está incluido 🙌
 - ¿Cambios o devoluciones? No hacemos, son unidades únicas. Por eso preguntame lo que necesites de talle o medidas antes de comprar 🙌
-- ¿Cuánto tiempo tengo para pagar? 30 minutos desde que te queda reservado. Pasado ese tiempo pasa al siguiente de la fila ⏱️
+- ¿Cuánto tiempo tengo para pagar? 15 minutos desde que te queda reservado. Pasado ese tiempo pasa al siguiente de la fila ⏱️
 - ¿Puedo pagar en efectivo/tarjeta/cuotas/al retirar? Por ahora solo transferencia. Reservás, transferís, mandás el comprobante y es tuyo 🙌
-- ¿Puedo reservarlo y pagar después/señarlo? No podemos guardarlo más de 30 minutos porque es unidad única y hay gente esperando 🙌
+- ¿Puedo reservarlo y pagar después/señarlo? No podemos guardarlo más de 15 minutos porque es unidad única y hay gente esperando 🙌
 - ¿Cómo sé que no es una estafa? Te entiendo, es lo primero que uno se pregunta 🙌 Retirás en un local real con dirección, que podés ir a ver: Pizzería Don Camilo, Independencia 7090, Del Viso. Y si algo sale mal tenés atención directa al +54 9 11 6656-8379.
 - ¿Tienen local? Local propio no, trabajamos con puntos de retiro que son comercios de la zona. Podés pasar a verlos antes de comprar 🙌
 - ¿Este es el número oficial? Sí, el único número de compra y pago es +54 9 11 7819-7825. Si te escriben de otro número, avisanos 🙌
