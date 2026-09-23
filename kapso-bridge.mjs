@@ -36,20 +36,34 @@ async function botModo() {
   }
   return _modoCache.modo;
 }
-function checkoutLink(token) {
-  return token ? `${APP_URL}/c/${token}` : null;
+// Link de compra. Con `wa`, la pagina precarga y bloquea el WhatsApp del que reservo (asi
+// no se equivoca de numero y el candado de la reserva no lo rebota).
+function checkoutLink(token, wa) {
+  if (!token) return null;
+  const w = String(wa || '').replace(/\D/g, '');
+  return `${APP_URL}/c/${token}${w ? `?wa=${w}` : ''}`;
 }
-// Mensajes del modo link.
-function msgLinkReserva(j) {
+// Mensajes del modo link (parrafos separados con linea en blanco para que se lean bien).
+function msgLinkReserva(j, wa) {
   const cod = String(j.sku || '').toUpperCase();
-  return `Listo, te reservé el ${cod} por ${j.minutos || 15} minutos ⏱️\nCompletá tus datos y el pago acá: ${checkoutLink(j.checkout_token)}\nSi se pasa el tiempo, se libera para el siguiente.`;
+  return [
+    `Listo, te reservé el ${cod} por ${j.minutos || 15} minutos ⏱️`,
+    `Completá tus datos y el pago acá: ${checkoutLink(j.checkout_token, wa)}`,
+    'Si se pasa el tiempo, se libera para el siguiente.',
+  ].join('\n\n');
 }
-function msgLinkInfo(st) {
-  const link = st?.step === 'link_enviado' ? checkoutLink(st?.producto?.checkout_token) : null;
+function msgLinkInfo(st, wa) {
+  const link = st?.step === 'link_enviado' ? checkoutLink(st?.producto?.checkout_token, wa) : null;
   if (link) {
-    return `Toda la info (precio, puntos de retiro y cómo pagar) está en la página del producto: ${link}\nSi necesitás algo más, escribinos al soporte: ${SOPORTE_TXT} 🙌`;
+    return [
+      `Toda la info (precio, puntos de retiro y cómo pagar) está en la página del producto: ${link}`,
+      `Si necesitás algo más, escribinos al soporte: ${SOPORTE_TXT} 🙌`,
+    ].join('\n\n');
   }
-  return `Para reservar una prenda mandame LO QUIERO + el código (ej: LO QUIERO A10) y te paso el link con toda la info.\nSi necesitás algo más, escribinos al soporte: ${SOPORTE_TXT} 🙌`;
+  return [
+    'Para reservar una prenda mandame LO QUIERO + el código (ej: LO QUIERO A10) y te paso el link con toda la info.',
+    `Si necesitás algo más, escribinos al soporte: ${SOPORTE_TXT} 🙌`,
+  ].join('\n\n');
 }
 // Intencion de compra explicita: "LO QUIERO A10" / "quiero el A10" / "reservar A10", o el
 // codigo solo ("A10"). Una pregunta que menciona un codigo ("de que material es el B03?")
@@ -668,8 +682,8 @@ async function handle(payload, textOverride) {
     // Modo link: el comprobante se carga en la pagina, no por el chat.
     if (linkMode) {
       st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
-      const link = st.step === 'link_enviado' ? checkoutLink(st.producto?.checkout_token) : null;
-      await send(wa, link ? `El comprobante se carga en la página del producto 🙌 ${link}` : msgLinkInfo(st));
+      const link = st.step === 'link_enviado' ? checkoutLink(st.producto?.checkout_token, wa) : null;
+      await send(wa, link ? `El comprobante se carga en la página del producto 🙌\n\n${link}` : msgLinkInfo(st, wa));
       return { ok: true, media_link_mode: true };
     }
     // Solo tratamos una imagen como COMPROBANTE si el cliente ya reservó y le pedimos el pago
@@ -758,8 +772,8 @@ async function handle(payload, textOverride) {
         const repetir = st.step === 'link_enviado' && st.lastCodigo === cod && !j.confirmada_de_fila;
         st.step = 'link_enviado'; st.lastCodigo = cod; st.producto = j; state[wa] = st; saveState(state);
         await send(wa, repetir
-          ? `Sí, sigue reservado para vos. Acá está el link: ${checkoutLink(j.checkout_token)}`
-          : msgLinkReserva(j));
+          ? `Sí, sigue reservado para vos. Acá está el link:\n\n${checkoutLink(j.checkout_token, wa)}`
+          : msgLinkReserva(j, wa));
       } else if (j.reason === 'reservado') {
         if (j.mensaje_fila) await send(wa, j.mensaje_fila);
         else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
@@ -771,7 +785,7 @@ async function handle(payload, textOverride) {
       else await send(wa, 'Perdón, hubo un problema. Ya nos fijamos y te confirmamos.');
       return { ok: true, link_mode: true };
     }
-    await send(wa, msgLinkInfo(st));
+    await send(wa, msgLinkInfo(st, wa));
     return { ok: true, link_mode: true, info: true };
   }
 
@@ -862,7 +876,7 @@ async function handle(payload, textOverride) {
         : `$${money(j.precio)}.`;
       // Solo el código (no el nombre completo) para que el mensaje no quede largo.
       const codReserva = String(j.sku || codigo).toUpperCase();
-      await send(wa, `Listo, reservé el ${codReserva}! 🛍️ ${precioTxt} Te lo dejo reservado por ${j.minutos || 15} minutos ⏳ ${askDeliveryText(j)}`);
+      await send(wa, `Listo, reservé el ${codReserva}! 🛍️ ${precioTxt}\n\nTe lo dejo reservado por ${j.minutos || 15} minutos ⏳\n\n${askDeliveryText(j)}`);
     } else if (j.reason === 'reservado') {
       if (j.mensaje_fila) await send(wa, j.mensaje_fila);
       else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
