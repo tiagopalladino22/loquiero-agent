@@ -144,11 +144,31 @@ function _ts(m) { let t = Number(m?.timestamp || m?.kapso?.timestamp || 0); if (
 // Devuelve el timestamp (ms) hasta el que el bot debe callarse para `wa`, o 0 si no hay
 // intervencion humana vigente. Solo cuenta salientes DESPUES del arranque del bridge (para
 // no confundir mensajes viejos del bot con humanos en el cold-start).
+// Texto de un mensaje de Kapso (texto, caption o el content que arma Kapso), normalizado.
+function _body(m) {
+  const t = m?.text?.body || m?.image?.caption || m?.kapso?.content || '';
+  return String(t).replace(/\s+/g, ' ').trim();
+}
+// Mensajes que mandó el SISTEMA a este número por fuera del bridge: la cola `notificaciones`
+// (aviso de Bronce, se liberó tu producto, etc.), que la drena tools/notificar.mjs directo por
+// la API de Kapso. Como no pasan por send(), no están en _botSent; sin esto el bridge creía que
+// los había escrito un humano y se callaba 24h (ej: aviso de Bronce → "mi link" sin respuesta).
+async function notificacionesEnviadas(wa) {
+  const ult10 = _num(wa).slice(-10);
+  if (!ult10 || !SB_URL || !SB_KEY) return new Set();
+  const desde = new Date(Date.now() - 3 * 86400000).toISOString();
+  const r = await fetch(`${SB_URL}/rest/v1/notificaciones?select=mensaje&estado=eq.enviado&wa_user_id=like.*${ult10}&created_at=gte.${desde}`, {
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+  });
+  const rows = r.ok ? await r.json() : [];
+  return new Set((Array.isArray(rows) ? rows : []).map((x) => String(x.mensaje || '').replace(/\s+/g, ' ').trim()));
+}
 async function pausaHumanaHasta(wa) {
   try {
     const data = await listMensajesCache();
     const msgs = (data && data.data) || [];
     let lastHuman = 0;
+    let notifs = null; // se busca solo si aparece un saliente que no reconocemos
     for (const m of msgs) {
       const k = m.kapso || {};
       if (k.direction !== 'outbound') continue;
@@ -159,8 +179,13 @@ async function pausaHumanaHasta(wa) {
       const nums = [k.phone_number, k.contact_phone, k.customer_phone, m.to, m.from, m.recipient].map(_num).filter(Boolean);
       if (!nums.includes(wa)) continue;                // otra conversacion
       if (m.id && _botSent.has(m.id)) continue;        // lo mando el bot, no un humano
+      // Tarjetas de producto (imagen) y plantillas las manda el sistema, no una persona.
+      if (m.type && m.type !== 'text') continue;
+      if (notifs === null) notifs = await notificacionesEnviadas(wa);
+      if (notifs.has(_body(m))) continue;              // aviso de la cola de notificaciones
       if (ts > lastHuman) lastHuman = ts;
     }
+    if (lastHuman) log({ type: 'human_detected', wa, at: new Date(lastHuman).toISOString() });
     return lastHuman ? lastHuman + HUMAN_PAUSE_MS : 0;
   } catch (e) { log({ type: 'pausa_humana_error', wa, error: String(e?.message || e) }); return 0; }
 }
