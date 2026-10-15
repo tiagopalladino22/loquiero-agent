@@ -577,6 +577,45 @@ function wantsMyLink(text) {
   const esAlta = /(sumarme|entrar|ingresar|me invitaron|me invito|invitacion para sumarme)/.test(t);
   return pideLink && !esPregunta && !esAlta;
 }
+// Consulta de su saldo de crédito ("cuánto crédito tengo", "mi saldo", "tengo crédito?").
+function wantsCredito(text) {
+  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!/(credito|saldo)/.test(t)) return false;
+  return /(cuanto|cuanta|tengo|mi credito|mi saldo|me queda|disponible|acumul|consult|ver mi|saber|hay)/.test(t) || t.trim().split(/\s+/).length <= 3;
+}
+// Fecha/hora en Argentina: "16/10 a las 14:30".
+function fechaHoraAR(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const f = d.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' });
+  const h = d.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${f} a las ${h}`;
+}
+// Responde el saldo de crédito del cliente (lee clientes por los últimos 10 dígitos del número).
+async function replyCredito(wa, state, st) {
+  let msg;
+  try {
+    const ult10 = String(wa).replace(/\D/g, '').slice(-10);
+    const r = await fetch(`${SB_URL}/rest/v1/clientes?select=credito,credito_vence_at&wa_user_id=like.*${ult10}&order=credito.desc&limit=1`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+    });
+    const rows = r.ok ? await r.json() : null;
+    if (!Array.isArray(rows)) throw new Error('rest ' + r.status);
+    const c = rows[0];
+    const vence = c?.credito_vence_at ? new Date(c.credito_vence_at) : null;
+    const saldo = c && !(vence && vence.getTime() <= Date.now()) ? Math.round(Number(c.credito || 0)) : 0;
+    if (!c) msg = 'No te encuentro anotado con este número 🤔 Si querés sumarte al grupo, decime "quiero entrar al grupo" y te anoto.';
+    else if (saldo > 0) msg = `Tenés $${money(saldo)} de crédito 💚` + (vence ? `\n\nLo podés usar hasta el ${fechaHoraAR(vence)}.` : '') + '\n\nSe descuenta solo cuando reservás tu próxima compra.';
+    else msg = 'Por ahora no tenés crédito acumulado.\n\nCada compra te suma crédito para la próxima (entre 5% y 10% de lo que pagás) 🙌';
+  } catch (e) {
+    log({ type: 'credito_error', wa, error: String(e?.message || e) });
+    msg = 'Perdón, no pude ver tu crédito ahora. Probá en un ratito 🙏';
+  }
+  await send(wa, msg);
+  st.history = (st.history || []).concat({ role: 'bot', text: msg }).slice(-8);
+  state[wa] = st; saveState(state);
+  return { ok: true };
+}
 function wantsCancel(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return /(no lo quiero|ya no lo quiero|no lo quiero mas|no lo voy a comprar|cancelar|cancelame|cancelo|cancela la compra|anular|anulame|dar de baja|me arrepenti|al final no|mejor no|dejalo|liberar|liberalo|liberame|soltalo|sacalo|borralo|daselo a otro|que se lo lleve otro|desisti|sacame de la fila|bajame de la lista|no me anotes|sacame de la espera)/.test(t);
@@ -751,6 +790,9 @@ async function handle(payload, textOverride) {
   if (wantsMyLink(text)) {
     return replyMiLink(wa, state, st);
   }
+  if (wantsCredito(text)) {
+    return replyCredito(wa, state, st);
+  }
   if (st.step === 'group_ask_ref' || st.step === 'group_ask_data' || wantsGroup(text)) {
     const enFlujo = st.step === 'group_ask_ref' || st.step === 'group_ask_data';
     // Si es el inicio (no venimos en el flujo) y ya es cliente por su NUMERO, dale el link.
@@ -786,7 +828,12 @@ async function handle(payload, textOverride) {
     const j = await registrarCliente({ nombre, apellido: pending.apellido || '', ref: pending.ref, wa });
     if (j.ok && j.nuevo) {
       st.step = 'group_registered'; st.group = j; delete st.group_pending; state[wa] = st; saveState(state);
-      await send(wa, `Listo ${j.nombre || nombre}, ya te anoté 🙌 Entrá al grupo con este link: ${GRUPO_LINK} ¡Bienvenido a LO QUIERO! 💚`);
+      // Crédito de bienvenida (lo carga registrar_cliente si el programa de créditos está activo).
+      const bien = Number(j.credito_bienvenida || 0);
+      const bienTxt = bien > 0
+        ? `\n\n🎁 Te regalamos $${money(bien)} de crédito de bienvenida. Tenés 48 horas para usarlo en tu primera compra${j.credito_vence ? ` (vence el ${fechaHoraAR(j.credito_vence)})` : ''}. Se descuenta solo cuando reservás.`
+        : '';
+      await send(wa, `Listo ${j.nombre || nombre}, ya te anoté 🙌 Entrá al grupo con este link: ${GRUPO_LINK} ¡Bienvenido a LO QUIERO! 💚${bienTxt}`);
     } else if (j.ok && j.ya_registrado) {
       st.step = 'group_registered'; st.group = j; delete st.group_pending; state[wa] = st; saveState(state);
       await send(wa, `Ya estabas anotado 😄 Este es el link del grupo: ${GRUPO_LINK}`);
