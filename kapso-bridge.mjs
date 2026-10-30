@@ -295,7 +295,7 @@ async function fichaProducto(codigo) {
     const c = encodeURIComponent(String(codigo || '').trim());
     if (!c) return null;
     const or = `or=(sku.ilike.${c},codigo.ilike.${c},shein_code.ilike.${c})`;
-    const res = await fetch(`${SUPA_URL}/rest/v1/productos?${or}&select=sku,descripcion,color,talle,atributos&limit=1`, {
+    const res = await fetch(`${SUPA_URL}/rest/v1/productos?${or}&select=sku,descripcion,color,talle,atributos,tabla_talles&limit=1`, {
       headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
     });
     if (!res.ok) return null;
@@ -439,16 +439,26 @@ function fichaText(f) {
   if (!f) return '';
   const at = f.atributos && typeof f.atributos === 'object' ? f.atributos : null;
   const lineas = at ? Object.entries(at).map(([k, v]) => `- ${k}: ${v}`).join('\n') : '';
-  if (!lineas) return '';
+  const tt = f.tabla_talles && Array.isArray(f.tabla_talles.columnas) && Array.isArray(f.tabla_talles.filas) ? f.tabla_talles : null;
+  if (!lineas && !tt) return '';
   const nombre = [f.sku, f.descripcion].filter(Boolean).join(' ');
-  return `FICHA TECNICA del producto${nombre ? ` (${nombre})` : ''} (datos REALES de SHEIN; para consultas de material/composicion/tela/temporada/cuidado respondé SOLO con esto, no inventes):\n${lineas}`;
+  const partes = [];
+  if (lineas) partes.push(`FICHA TECNICA del producto${nombre ? ` (${nombre})` : ''} (datos REALES de SHEIN; para consultas de material/composicion/tela/temporada/cuidado respondé SOLO con esto, no inventes):\n${lineas}`);
+  if (tt) {
+    // Tabla de talles de SHEIN: el producto es de UN talle (unidad única); las medidas que
+    // importan son las de su fila. Las otras filas sirven para comparar.
+    const unidad = tt.unidad === 'inch' ? 'pulgadas' : 'cm';
+    const filas = tt.filas.map((r) => `- ${tt.columnas.map((c, i) => `${c}: ${r[i] ?? ''}`).join(', ')}`).join('\n');
+    partes.push(`TABLA DE TALLES${nombre ? ` (${nombre})` : ''} (datos REALES de SHEIN, en ${unidad}; este producto es talle ${f.talle || 'sin dato'} y es unidad única, no hay otros talles. Para consultas de medidas, largo, ancho o si le queda, respondé SOLO con la fila de su talle; si el cliente da sus medidas, comparalas con esa fila. No inventes):\n${filas}`);
+  }
+  return partes.join('\n\n');
 }
 function buildBrainPrompt(userText, st, ficha, extraHint) {
   const kb = knowledgeBase();
   const estado = st?.step ? `Contexto: el cliente esta en el paso "${st.step}".` : '';
   const prod = st?.producto ? `Producto en juego: ${productoDesc(st.producto)}${st.producto.precio ? `, $${money(st.producto.precio)}` : ''}.` : '';
   // Ficha: la explicita (consulta por codigo) o, si no, la del producto en juego.
-  const fichaBlock = fichaText(ficha || (st?.producto?.atributos ? st.producto : null));
+  const fichaBlock = fichaText(ficha || (st?.producto?.atributos || st?.producto?.tabla_talles ? st.producto : null));
   const hist = Array.isArray(st?.history) ? st.history.slice(-6) : [];
   const histText = hist
     .map((h) => `${h.role === 'user' ? 'Cliente' : 'LO QUIERO'}: ${String(h.text || '').slice(0, 400)}`)
@@ -624,7 +634,7 @@ function wantsCancel(text) {
 // responderla con datos reales, sin dispararla como reserva.
 function esConsultaFicha(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  return /(material|composici|de que (tela|material|genero)|que tela|algod|poliest|elastic|elastan|transparent|temporada|se lava|lavad|lavar|encoge|abriga|abrigad|grosor|talle real|es fino|es grueso|es calentito|tipo de tela)/.test(t);
+  return /(material|composici|de que (tela|material|genero)|que tela|algod|poliest|elastic|elastan|transparent|temporada|se lava|lavad|lavar|encoge|abriga|abrigad|grosor|talle real|es fino|es grueso|es calentito|tipo de tela|medida|cuanto mide|que largo|de largo|de ancho|busto|cintura|cadera|tiro|tabla de talle|me (va|queda|entra)|le (va|queda|entra)|centimetro|\bcm\b)/.test(t);
 }
 function wantsHuman(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -925,7 +935,7 @@ async function handle(payload, textOverride) {
   if (esConsultaFicha(text)) {
     const cod = codigoFrom(text);
     let ficha = cod ? await fichaProducto(cod) : null;
-    if (!ficha && st?.producto?.atributos) ficha = st.producto;
+    if (!ficha && (st?.producto?.atributos || st?.producto?.tabla_talles)) ficha = st.producto;
     const reply = await llmReply(text, wa, st, ficha);
     if (/\[\[\s*mi_?link\s*\]\]/i.test(reply)) return replyMiLink(wa, state, st);
     if (/\[\[\s*cancelar\s*\]\]/i.test(reply)) return replyCancelar(wa, state, st);
