@@ -9,6 +9,7 @@
 //
 // Env (en el VPS): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 //   (fallback a SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).
+const GRUPO_ID = Number(process.env.LOQUIERO_GRUPO_ID || 1); // grupo de la copia del bot que llama
 
 const url = (
   process.env.LOQUIERO_SUPABASE_URL ||
@@ -35,6 +36,12 @@ if (!url || !key) {
 }
 
 try {
+  // Grupo propio con número de una persona: ese; si no, el de Ajustes (grupo 1).
+  if (GRUPO_ID !== 1) {
+    const g = await fetch(`${url}/rest/v1/grupos?id=eq.${GRUPO_ID}&select=humano_wa`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    const gr = g.ok ? await g.json() : [];
+    if (Array.isArray(gr) && gr[0]?.humano_wa) { out(gr[0].humano_wa); process.exit(0); }
+  }
   const res = await fetch(`${url}/rest/v1/config?key=eq.humano_wa&select=value`, {
     headers: { apikey: key, Authorization: `Bearer ${key}` },
   });

@@ -13,6 +13,7 @@
 // Env (las mismas del bot + Kapso):
 //   LOQUIERO_SUPABASE_URL, LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 //   KAPSO_API_KEY, KAPSO_PHONE_NUMBER_ID (opcional), KAPSO_CLOUD_BASE / KAPSO_API_VERSION (opcionales)
+const GRUPO_ID = Number(process.env.LOQUIERO_GRUPO_ID || 1); // grupo de la copia del bot que llama
 
 const DRY = process.argv.includes("--dry");
 
@@ -55,11 +56,14 @@ async function sendText(to, body) {
 async function main() {
   // 1 + 2: respaldo de pg_cron (idempotente)
   let liberadas = 0, confirmadas = 0;
-  try { liberadas = await rpc("liberar_reservas_vencidas"); } catch (e) { log(`warn liberar: ${e.message}`); }
-  try { confirmadas = await rpc("confirmar_recompensas"); } catch (e) { log(`warn confirmar: ${e.message}`); }
+  // Son de toda la base: las corre solo la copia del grupo 1.
+  if (GRUPO_ID === 1) {
+    try { liberadas = await rpc("liberar_reservas_vencidas"); } catch (e) { log(`warn liberar: ${e.message}`); }
+    try { confirmadas = await rpc("confirmar_recompensas"); } catch (e) { log(`warn confirmar: ${e.message}`); }
+  }
 
   // 3: drenar pendientes
-  const q = `${SB}/rest/v1/notificaciones?estado=eq.pendiente&intentos=lt.5&order=created_at.asc&limit=50`;
+  const q = `${SB}/rest/v1/notificaciones?estado=eq.pendiente&grupo_id=eq.${GRUPO_ID}&intentos=lt.5&order=created_at.asc&limit=50`;
   const res = await fetch(q, { headers: sbHeaders });
   const pend = res.ok ? await res.json() : [];
 

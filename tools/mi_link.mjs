@@ -8,6 +8,7 @@
 // y el link wa.me al bot, e imprime JSON. El bot le manda el link tal cual.
 //
 // Env (en el VPS): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY.
+const GRUPO_ID = Number(process.env.LOQUIERO_GRUPO_ID || 1); // grupo de la copia del bot que llama
 
 const url = (
   process.env.LOQUIERO_SUPABASE_URL ||
@@ -75,7 +76,7 @@ async function fixNumericCodeIfNeeded(json) {
     if (!(await codeExists(candidate))) { codigo = candidate; break; }
   }
   if (!codigo) return json;
-  const qs = new URLSearchParams({ wa_user_id: `eq.${wa}` });
+  const qs = new URLSearchParams({ wa_user_id: `eq.${wa}`, grupo_id: `eq.${GRUPO_ID}` });
   const res = await fetch(`${url}/rest/v1/clientes?${qs}`, {
     method: "PATCH",
     headers: {
@@ -98,7 +99,7 @@ try {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ p_wa: wa }),
+    body: JSON.stringify({ p_wa: wa, p_grupo: GRUPO_ID }),
   });
   const json = await res.json();
   if (!res.ok) {

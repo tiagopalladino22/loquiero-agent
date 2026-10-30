@@ -10,6 +10,7 @@
 //
 // Env (en el VPS): LOQUIERO_SUPABASE_URL + LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
 //   (fallback a SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).
+const GRUPO_ID = Number(process.env.LOQUIERO_GRUPO_ID || 1); // grupo de la copia del bot que llama
 
 const url = (
   process.env.LOQUIERO_SUPABASE_URL ||
@@ -70,6 +71,7 @@ try {
       p_ref: ref,
       p_wa: wa,
       p_telefono: telefono,
+      p_grupo: GRUPO_ID,
     }),
   });
   const json = await res.json();
