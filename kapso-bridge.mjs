@@ -567,6 +567,7 @@ async function replyMiLink(wa, state, st) {
   else if (j.ok && j.link) msg = `Acá tenés tu link para invitar 🙌 Cada persona que entre y compre con tu código cuenta para vos: ${j.link}`;
   else if (j.ok && j.codigo) msg = `Tu código de referido es ${j.codigo}. Ya te paso el link armado en un ratito 🙌`;
   else if (j.reason === 'no_existe') msg = 'Para tener tu link primero tenés que estar en el grupo. ¿Querés sumarte?';
+  else if (j.reason === 'desactivado') msg = 'Por ahora en este grupo no tenemos programa de referidos 🙌';
   else msg = 'Perdón, hubo un problema. Ya te paso tu link por privado 🙌';
   await send(wa, msg);
   st.history = (st.history || []).concat({ role: 'bot', text: msg }).slice(-8);
