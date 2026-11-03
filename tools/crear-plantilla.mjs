@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// Crea la plantilla "pedido_reservado" en la cuenta de WhatsApp (WABA) del bot de un grupo.
-// La usan los grupos con pedidos desde el grupo: es el primer mensaje del bot a quien escribió
-// QUIERO en el grupo (o a quien le toca en la fila). Meta la revisa: de minutos a un día.
-// La arma plantilla_pedido() en la base (tuganga-ops, scripts/migrate-pedidos-grupo.mjs);
-// si se cambia el texto acá, los parámetros tienen que seguir siendo los mismos.
+// Crea las plantillas de pedidos desde el grupo en la cuenta de WhatsApp (WABA) del bot de un
+// grupo. Son el primer mensaje del bot a alguien que solo escribió en el grupo:
+//   pedido_reservado  a quien escribió QUIERO (o a quien le toca en la fila)
+//   aviso_codigo      a quien escribió otra cosa: cómo pedir y a qué número consultar
+// Meta las revisa: de minutos a un día. Las arman plantilla_pedido() y plantilla_aviso() en la
+// base (tuganga-ops, scripts/migrate-pedidos-grupo.mjs); si se cambia el texto acá, los
+// parámetros tienen que seguir siendo los mismos.
 //
 //   KAPSO_WABA_ID=... node tools/crear-plantilla.mjs          # crea
-//   KAPSO_WABA_ID=... node tools/crear-plantilla.mjs --estado # muestra si ya está aprobada
+//   KAPSO_WABA_ID=... node tools/crear-plantilla.mjs --estado # muestra si ya están aprobadas
 //
 // Env: KAPSO_API_KEY, KAPSO_WABA_ID (WhatsApp Business Account id del número del bot, en Kapso).
 const KAPSO_BASE = process.env.KAPSO_CLOUD_BASE || "https://api.kapso.ai/meta/whatsapp";
@@ -21,12 +23,14 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  const r = await fetch(`${url}?name=pedido_reservado`, { headers });
-  console.log(r.status, await r.text());
+  for (const name of ["pedido_reservado", "aviso_codigo"]) {
+    const r = await fetch(`${url}?name=${name}`, { headers });
+    console.log(name, r.status, await r.text());
+  }
   process.exit(0);
 }
 
-const plantilla = {
+const pedido = {
   name: "pedido_reservado",
   language: "es_AR",
   category: "UTILITY",
@@ -47,5 +51,17 @@ const plantilla = {
     },
   ],
 };
-const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
-console.log(r.status, await r.text());
+const aviso = {
+  name: "aviso_codigo",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [{
+    type: "BODY",
+    text: "Hola! Si quisiste pedir un producto, recordá que tenés que escribir QUIERO y el código (por ejemplo QUIERO A28) o responder \"quiero\" a la publicación. Cualquier otra consulta la podés hacer a este número: {{1}}. Gracias!",
+    example: { body_text: [["https://wa.me/5491100000000"]] },
+  }],
+};
+for (const plantilla of [pedido, aviso]) {
+  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
+  console.log(plantilla.name, r.status, await r.text());
+}
