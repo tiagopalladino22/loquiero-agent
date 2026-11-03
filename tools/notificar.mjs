@@ -8,7 +8,8 @@
 // Hace tres cosas:
 //   1. libera las reservas vencidas y avanza la fila (encola avisos)   [respaldo de pg_cron]
 //   2. confirma las recompensas cuya entrega ya cumplio los dias        [respaldo de pg_cron]
-//   3. drena la cola `notificaciones` mandando el mensaje libre por WhatsApp (Kapso)
+//   3. drena la cola `notificaciones` mandando el mensaje libre por WhatsApp (Kapso), o la
+//      plantilla si la notificación trae una (pedidos desde el grupo)
 //
 // Env (las mismas del bot + Kapso):
 //   LOQUIERO_SUPABASE_URL, LOQUIERO_SUPABASE_SERVICE_ROLE_KEY
@@ -53,6 +54,19 @@ async function sendText(to, body) {
   return t;
 }
 
+// Primer mensaje a quien nunca le escribió al bot (pedidos desde el grupo): Meta exige plantilla
+// aprobada. `plantilla` = { name, language, components } tal cual la arma plantilla_pedido().
+async function sendTemplate(to, plantilla) {
+  const res = await fetch(`${KAPSO_BASE}/${KAPSO_VER}/${KAPSO_PHONE}/messages`, {
+    method: "POST",
+    headers: { "X-API-Key": KAPSO_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "template", template: plantilla }),
+  });
+  const t = await res.text();
+  if (!res.ok) throw new Error(`Kapso ${res.status}: ${t.slice(0, 300)}`);
+  return t;
+}
+
 async function main() {
   // 1 + 2: respaldo de pg_cron (idempotente)
   let liberadas = 0, confirmadas = 0;
@@ -75,9 +89,10 @@ async function main() {
       fallidas++;
       continue;
     }
-    if (DRY) { log(`[dry] -> ${to}: ${n.mensaje}`); enviadas++; continue; }
+    if (DRY) { log(`[dry] -> ${to}: ${n.plantilla ? `plantilla ${JSON.stringify(n.plantilla)}` : n.mensaje}`); enviadas++; continue; }
     try {
-      await sendText(to, n.mensaje);
+      if (n.plantilla) await sendTemplate(to, n.plantilla);
+      else await sendText(to, n.mensaje);
       await rpc("marcar_notificacion", { p_id: n.id, p_estado: "enviado", p_error: null });
       enviadas++;
     } catch (e) {
