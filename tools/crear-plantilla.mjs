@@ -2,8 +2,10 @@
 // Crea las plantillas de pedidos desde el grupo en la cuenta de WhatsApp (WABA) del bot de un
 // grupo. Son el primer mensaje del bot a alguien que solo escribió en el grupo:
 //   pedido_reservado  a quien escribió QUIERO (o a quien le toca en la fila)
+//   pedido_en_fila    a quien escribió QUIERO y ya la tenía otra persona: su lugar en la fila
 //   aviso_codigo      a quien escribió otra cosa: cómo pedir y a qué número consultar
-// Meta las revisa: de minutos a un día. Las arman plantilla_pedido() y plantilla_aviso() en la
+// Meta las revisa: de minutos a un día. Las arman plantilla_pedido(), plantilla_fila() y
+// plantilla_aviso() en la
 // base (tuganga-ops, scripts/migrate-pedidos-grupo.mjs); si se cambia el texto acá, los
 // parámetros tienen que seguir siendo los mismos.
 //
@@ -23,7 +25,7 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  for (const name of ["pedido_reservado", "aviso_codigo"]) {
+  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo"]) {
     const r = await fetch(`${url}?name=${name}`, { headers });
     console.log(name, r.status, await r.text());
   }
@@ -51,6 +53,16 @@ const pedido = {
     },
   ],
 };
+const fila = {
+  name: "pedido_en_fila",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [{
+    type: "BODY",
+    text: "Hola! {{1}} ya está reservada por otra persona. Te anotamos en la fila de espera: sos el número {{2}}. Si se libera, te escribimos.",
+    example: { body_text: [["A28 · Vestido negro (talle S)", "1"]] },
+  }],
+};
 const aviso = {
   name: "aviso_codigo",
   language: "es_AR",
@@ -61,7 +73,7 @@ const aviso = {
     example: { body_text: [["https://wa.me/5491100000000"]] },
   }],
 };
-for (const plantilla of [pedido, aviso]) {
+for (const plantilla of [pedido, fila, aviso]) {
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
   console.log(plantilla.name, r.status, await r.text());
 }
