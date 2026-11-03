@@ -2,15 +2,24 @@
 import os, re, signal, subprocess, time, urllib.request
 from pathlib import Path
 
+import sys
+
+# Un watchdog por bot. Sin argumentos cuida el bot de LO QUIERO (grupo 1), como siempre.
+# Para el bot de otro grupo: loquiero_kapso_watchdog.py /opt/data/loquiero-g2/.env
+# Ese .env trae las env del bot (KAPSO_API_KEY de su cuenta de Kapso, KAPSO_PHONE_NUMBER_ID,
+# PORT, LOQUIERO_GRUPO_ID...) más KAPSO_WEBHOOK_ID (el webhook de su número en Kapso).
+# Sus pid, logs y URL del túnel quedan en la carpeta de ese .env.
 ROOT = Path('/opt/data/loquiero-agent')
-ENV_FILE = ROOT / '.env'
+ENV_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / '.env'
+STATE = ENV_FILE.parent
 BRIDGE = ROOT / 'kapso-bridge.mjs'
-PID_BRIDGE = ROOT / 'kapso-bridge.pid'
-PID_TUNNEL = ROOT / 'cloudflared.pid'
-TUNNEL_LOG = ROOT / 'cloudflared.log'
-PUBLIC_URL_FILE = ROOT / 'public-url.txt'
+PID_BRIDGE = STATE / 'kapso-bridge.pid'
+PID_TUNNEL = STATE / 'cloudflared.pid'
+TUNNEL_LOG = STATE / 'cloudflared.log'
+PUBLIC_URL_FILE = STATE / 'public-url.txt'
 PHONE_NUMBER_ID = '1329393980246912'
 WEBHOOK_ID = 'bf68e5d3-c4c3-4aef-88c5-f1631db65f80'
+PORT = '8787'
 CLOUDFLARED = '/opt/data/bin/cloudflared'
 
 def load_env():
@@ -21,6 +30,9 @@ def load_env():
                 continue
             k, v = line.split('=', 1)
             env[k.strip()] = v.strip().strip('"').strip("'")
+    if len(sys.argv) > 1:
+        global PHONE_NUMBER_ID, WEBHOOK_ID, PORT
+        PHONE_NUMBER_ID, WEBHOOK_ID, PORT = env['KAPSO_PHONE_NUMBER_ID'], env['KAPSO_WEBHOOK_ID'], env['PORT']
     env['KAPSO_PHONE_NUMBER_ID'] = PHONE_NUMBER_ID
     env.pop('KAPSO_BRIDGE_SECRET', None)
     return env
@@ -60,10 +72,10 @@ def http_ok(url, timeout=8):
         return False
 
 def start_bridge(env):
-    if http_ok('http://127.0.0.1:8787/health', 3):
+    if http_ok(f'http://127.0.0.1:{PORT}/health', 3):
         return False
     kill(PID_BRIDGE)
-    log = open(ROOT / 'kapso-bridge.stdout.log', 'ab')
+    log = open(STATE / 'kapso-bridge.stdout.log', 'ab')
     p = subprocess.Popen(['node', str(BRIDGE)], env=env, stdout=log, stderr=log, start_new_session=True)
     PID_BRIDGE.write_text(str(p.pid))
     time.sleep(2)
@@ -78,7 +90,7 @@ def start_tunnel():
     kill(PID_TUNNEL)
     TUNNEL_LOG.write_text('')
     log = open(TUNNEL_LOG, 'ab')
-    p = subprocess.Popen([CLOUDFLARED, 'tunnel', '--url', 'http://127.0.0.1:8787', '--no-autoupdate'], stdout=log, stderr=log, start_new_session=True)
+    p = subprocess.Popen([CLOUDFLARED, 'tunnel', '--url', f'http://127.0.0.1:{PORT}', '--no-autoupdate'], stdout=log, stderr=log, start_new_session=True)
     PID_TUNNEL.write_text(str(p.pid))
     url = None
     for _ in range(30):
@@ -94,18 +106,19 @@ def start_tunnel():
                 return url
     raise RuntimeError('cloudflared did not produce a healthy URL')
 
-def update_webhook(url):
+def update_webhook(url, env):
+    # Con el env del bot: el CLI usa su KAPSO_API_KEY (la cuenta de Kapso de ese grupo).
     subprocess.run([
         'npx','-y','@kapso/cli','whatsapp','webhooks','update',WEBHOOK_ID,
         '--phone-number-id',PHONE_NUMBER_ID,'--url',url + '/kapso','--active','--output','json'
-    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90)
+    ], env=env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90)
 
 changed=[]
 env=load_env()
 if start_bridge(env): changed.append('bridge restarted')
 new_url=start_tunnel()
 if new_url:
-    update_webhook(new_url)
+    update_webhook(new_url, env)
     changed.append('tunnel updated '+new_url)
 if changed:
-    print('LO QUIERO watchdog: ' + '; '.join(changed))
+    print(f'LO QUIERO watchdog ({ENV_FILE}): ' + '; '.join(changed))
