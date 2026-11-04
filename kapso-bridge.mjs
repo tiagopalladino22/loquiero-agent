@@ -14,6 +14,9 @@ const MARCA = process.env.LOQUIERO_MARCA || 'LO QUIERO';
 const GRUPO_LINK = process.env.LOQUIERO_GRUPO_LINK || 'https://chat.whatsapp.com/EOoTDovtkE13KIOaU4ln8Z?s=cl&p=i&mlu=4&ilr=4';
 const HUMANO_LINK = process.env.LOQUIERO_HUMANO_LINK || 'https://wa.me/5491166568379';
 const SOPORTE_TXT = process.env.LOQUIERO_SOPORTE_TXT || '+54 9 11 6656-8379';
+// Grupos donde la gente entra directo al grupo y al bot solo llegan los que compran (pedidos
+// desde el grupo): sin alta ni "¿quién te invitó?", y el bot reconoce la reserva hecha en el grupo.
+const SOLO_COMPRAS = process.env.LOQUIERO_SOLO_COMPRAS === '1';
 // Base de los links de compra (pagina publica /c/<token> del ops center).
 const APP_URL = (process.env.LOQUIERO_APP_URL || 'https://loquiero.systeems.com').replace(/\/+$/, '');
 const SB_URL = (process.env.LOQUIERO_SUPABASE_URL || 'https://stizanbebncgxzntfwua.supabase.co').replace(/\/+$/, '');
@@ -26,6 +29,8 @@ const SB_KEY = process.env.LOQUIERO_SUPABASE_SERVICE_ROLE_KEY || '';
 // Se lee de la base con cache de 60s, asi el switch en Ajustes aplica sin reiniciar.
 let _modoCache = { modo: 'chat', at: 0 };
 async function botModo() {
+  // Una copia puede fijar su modo (LOQUIERO_BOT_MODO); si no, manda config.bot_modo.
+  if (['link', 'chat'].includes(process.env.LOQUIERO_BOT_MODO)) return process.env.LOQUIERO_BOT_MODO;
   if (Date.now() - _modoCache.at < 60000) return _modoCache.modo;
   try {
     const r = await fetch(`${SB_URL}/rest/v1/config?select=value&key=eq.bot_modo`, {
@@ -65,7 +70,9 @@ function msgLinkInfo(st, wa) {
     ].join('\n\n');
   }
   return [
-    'Para reservar una prenda mandame LO QUIERO + el código (ej: LO QUIERO A10) y te paso el link con toda la info.',
+    SOLO_COMPRAS
+      ? 'Para pedir una prenda escribí QUIERO + el código en el grupo o acá (ej: QUIERO A10) y te paso el link con toda la info.'
+      : 'Para reservar una prenda mandame LO QUIERO + el código (ej: LO QUIERO A10) y te paso el link con toda la info.',
     `Si necesitás algo más, escribinos al soporte: ${SOPORTE_TXT} 🙌`,
   ].join('\n\n');
 }
@@ -166,6 +173,22 @@ async function notificacionesEnviadas(wa) {
   });
   const rows = r.ok ? await r.json() : [];
   return new Set((Array.isArray(rows) ? rows : []).map((x) => String(x.mensaje || '').replace(/\s+/g, ' ').trim()));
+}
+// Reserva vigente de este número en su grupo. Con pedidos desde el grupo la reserva se hace
+// en el grupo y el bot no la tiene en su estado: la busca para darle su link si escribe.
+async function reservaVigente(wa) {
+  const ult10 = _num(wa).slice(-10);
+  if (!ult10 || !SB_URL || !SB_KEY) return null;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/productos?select=sku,checkout_token&estado=eq.reservado&grupo_id=eq.${GRUPO_ID}&reservado_por=like.*${ult10}&order=reservado_at.desc&limit=1`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+    });
+    const rows = r.ok ? await r.json() : [];
+    return Array.isArray(rows) && rows[0]?.checkout_token ? rows[0] : null;
+  } catch (e) {
+    log({ type: 'reserva_vigente_error', wa, error: String(e?.message || e) });
+    return null;
+  }
 }
 async function pausaHumanaHasta(wa) {
   try {
@@ -765,6 +788,10 @@ async function handle(payload, textOverride) {
   const st = state[wa] || {};
 
   const linkMode = (await botModo()) === 'link';
+  if (linkMode && SOLO_COMPRAS && st.step !== 'link_enviado') {
+    const r = await reservaVigente(wa);
+    if (r) { st.step = 'link_enviado'; st.lastCodigo = String(r.sku || '').toUpperCase(); st.producto = { ...r }; state[wa] = st; saveState(state); }
+  }
 
   if (hasMedia) {
     const mediaId = mediaIdFrom(payload);
@@ -807,6 +834,11 @@ async function handle(payload, textOverride) {
   }
   if (wantsCredito(text)) {
     return replyCredito(wa, state, st);
+  }
+  // Sin alta por el bot: si pide entrar al grupo, el link y listo.
+  if (SOLO_COMPRAS && wantsGroup(text) && /grupo/i.test(text) && !codigoIntencionCompra(text)) {
+    await send(wa, `Entrá directo al grupo con este link: ${GRUPO_LINK} 🙌`);
+    return { ok: true, grupo_link: true };
   }
   if (st.step === 'group_ask_ref' || st.step === 'group_ask_data' || wantsGroup(text)) {
     const enFlujo = st.step === 'group_ask_ref' || st.step === 'group_ask_data';
