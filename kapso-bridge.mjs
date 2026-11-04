@@ -403,9 +403,24 @@ function deliveryPointLines(producto) {
     return `- ${nombre}${suffix ? `: ${suffix}` : ''}`;
   }).filter(Boolean);
 }
+// Cuándo se entrega: el texto del grupo (grupos.entrega_texto, se edita en Entrega y pago).
+// Vacío o sin columna = el de siempre (martes y viernes). Se relee cada 5 minutos.
+const ENTREGA_DEFAULT = 'Las entregas las hacemos 2 veces por semana (martes y viernes).';
+const _entrega = { t: 0, txt: null };
+async function cargarEntrega() {
+  if (Date.now() - _entrega.t < 5 * 60 * 1000 || !SB_URL || !SB_KEY) return;
+  _entrega.t = Date.now();
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/grupos?select=entrega_texto&id=eq.${GRUPO_ID}`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+    });
+    const rows = r.ok ? await r.json() : [];
+    _entrega.txt = String((Array.isArray(rows) && rows[0]?.entrega_texto) || '').trim() || null;
+  } catch (e) { log({ type: 'entrega_error', error: String(e?.message || e) }); }
+}
 function askDeliveryText(producto) {
   const lines = deliveryPointLines(producto);
-  const entrega = 'Las entregas las hacemos 2 veces por semana (martes y viernes).';
+  const entrega = _entrega.txt || ENTREGA_DEFAULT;
   if (lines.length === 0) return `${entrega} El equipo te coordina el punto de retiro por privado 🙌`;
   return `${entrega}\nA continuación te envío nuestros puntos de retiro gratuitos:\n${lines.join('\n')}\n¿Por cuál preferís retirar?`;
 }
@@ -784,6 +799,7 @@ async function handle(payload, textOverride) {
     return { ok: true, human_paused: true };
   }
 
+  await cargarEntrega();
   const state = loadState();
   const st = state[wa] || {};
 
