@@ -15,7 +15,7 @@ const GRUPO_LINK = process.env.LOQUIERO_GRUPO_LINK || 'https://chat.whatsapp.com
 const HUMANO_LINK = process.env.LOQUIERO_HUMANO_LINK || 'https://wa.me/5491166568379';
 const SOPORTE_TXT = process.env.LOQUIERO_SOPORTE_TXT || '+54 9 11 6656-8379';
 // Grupos donde la gente entra directo al grupo y al bot solo llegan los que compran (pedidos
-// desde el grupo): sin alta ni "¿quién te invitó?", y el bot reconoce la reserva hecha en el grupo.
+// desde el grupo): sin alta al grupo, y el bot reconoce la reserva hecha en el grupo.
 const SOLO_COMPRAS = process.env.LOQUIERO_SOLO_COMPRAS === '1';
 // Base de los links de compra (pagina publica /c/<token> del ops center).
 const APP_URL = (process.env.LOQUIERO_APP_URL || 'https://loquiero.systeems.com').replace(/\/+$/, '');
@@ -835,12 +835,8 @@ async function handle(payload, textOverride) {
   if (wantsCredito(text)) {
     return replyCredito(wa, state, st);
   }
-  // Sin alta por el bot: si pide entrar al grupo, el link y listo.
-  if (SOLO_COMPRAS && wantsGroup(text) && /grupo/i.test(text) && !codigoIntencionCompra(text)) {
-    await send(wa, `Entrá directo al grupo con este link: ${GRUPO_LINK} 🙌`);
-    return { ok: true, grupo_link: true };
-  }
-  if (st.step === 'group_ask_ref' || st.step === 'group_ask_data' || wantsGroup(text)) {
+  // Sin alta por el bot (la gente entra directo al grupo): ese flujo no corre.
+  if (!SOLO_COMPRAS && (st.step === 'group_ask_ref' || st.step === 'group_ask_data' || wantsGroup(text))) {
     const enFlujo = st.step === 'group_ask_ref' || st.step === 'group_ask_data';
     // Si es el inicio (no venimos en el flujo) y ya es cliente por su NUMERO, dale el link.
     if (!enFlujo) {
