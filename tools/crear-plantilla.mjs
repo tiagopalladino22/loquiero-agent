@@ -8,6 +8,9 @@
 //                       marketing); se usa cargando config plantilla_reserva
 //   reserva_lista       la reserva con la duración en texto ({{2}} = "12 horas" o "15 minutos");
 //                       la que usa el grupo 2 (config plantilla_reserva)
+//   compra_retiro       al terminar la compra en la página (grupo 2): compra confirmada, desde qué
+//                       día y dónde retira ({{1}} prenda, {{2}} "miércoles 18/11", {{3}} punto,
+//                       dirección y horario); se usa cargando config plantilla_compra
 //   consulta_producto   a quien preguntó citando una foto (medidas, talle): link del producto;
 //                       se usa cargando config plantilla_consulta (migrate-grupo-libero)
 // Meta las revisa: de minutos a un día. Las arman plantilla_pedido(), plantilla_fila() y
@@ -32,7 +35,7 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista"]) {
+  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista", "compra_retiro"]) {
     const r = await fetch(`${url}?name=${name}`, { headers });
     console.log(name, r.status, await r.text());
   }
@@ -143,9 +146,21 @@ const lista = {
     },
   ],
 };
+const compra = {
+  name: "compra_retiro",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [
+    {
+      type: "BODY",
+      text: "¡Gracias por tu compra! Tu pedido de {{1}} quedó confirmado ✅\n\nPodés retirarlo desde el {{2}} en {{3}}.\n\nTe esperamos.",
+      example: { body_text: [["A28 · Vestido negro (talle S)", "miércoles 18/11", "Kiosco NOE, Pardo 1070, Bella Vista. Horario: Lun a Vier 7.30 a 20hs, Sab 9 a 13.30hs"]] },
+    },
+  ],
+};
 const i = process.argv.indexOf("--solo");
 const solo = i > 0 ? process.argv[i + 1].split(",") : null;
-for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista].filter((x) => !solo || solo.includes(x.name))) {
+for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista, compra].filter((x) => !solo || solo.includes(x.name))) {
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
   console.log(plantilla.name, r.status, await r.text());
 }
