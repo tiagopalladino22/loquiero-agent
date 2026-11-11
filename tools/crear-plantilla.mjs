@@ -6,6 +6,8 @@
 //   aviso_codigo      a quien escribió otra cosa: cómo pedir y a qué número consultar
 //   reserva_confirmada  igual que pedido_reservado, redactada como utilidad (la otra quedó
 //                       marketing); se usa cargando config plantilla_reserva
+//   reserva_lista       la reserva con la duración en texto ({{2}} = "12 horas" o "15 minutos");
+//                       la que usa el grupo 2 (config plantilla_reserva)
 //   consulta_producto   a quien preguntó citando una foto (medidas, talle): link del producto;
 //                       se usa cargando config plantilla_consulta (migrate-grupo-libero)
 // Meta las revisa: de minutos a un día. Las arman plantilla_pedido(), plantilla_fila() y
@@ -30,7 +32,7 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto"]) {
+  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista"]) {
     const r = await fetch(`${url}?name=${name}`, { headers });
     console.log(name, r.status, await r.text());
   }
@@ -120,9 +122,30 @@ const consulta = {
     },
   ],
 };
+const lista = {
+  name: "reserva_lista",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [
+    {
+      type: "BODY",
+      text: "Tu pedido de {{1}} quedó reservado. Tenés {{2}} para completar tus datos y el pago desde el botón.",
+      example: { body_text: [["A28 · Vestido negro (talle S)", "12 horas"]] },
+    },
+    {
+      type: "BUTTONS",
+      buttons: [{
+        type: "URL",
+        text: "Completar compra",
+        url: "https://loquiero.systeems.com/c/{{1}}",
+        example: ["https://loquiero.systeems.com/c/1ddbd4180d4542809305?wa=5491100000000"],
+      }],
+    },
+  ],
+};
 const i = process.argv.indexOf("--solo");
 const solo = i > 0 ? process.argv[i + 1].split(",") : null;
-for (const plantilla of [pedido, fila, aviso, reserva, consulta].filter((x) => !solo || solo.includes(x.name))) {
+for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista].filter((x) => !solo || solo.includes(x.name))) {
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
   console.log(plantilla.name, r.status, await r.text());
 }
