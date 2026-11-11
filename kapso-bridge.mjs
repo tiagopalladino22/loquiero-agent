@@ -56,7 +56,7 @@ function checkoutLink(token, wa) {
 function msgLinkReserva(j, wa) {
   const cod = String(j.sku || '').toUpperCase();
   return [
-    `Listo, te reservé el ${cod} por ${j.minutos || 15} minutos ⏱️`,
+    `Listo, te reservé el ${cod} por ${j.texto || `${j.minutos || 15} minutos`} ⏱️`,
     `Completá tus datos y el pago acá: ${checkoutLink(j.checkout_token, wa)}`,
     'Si se pasa el tiempo, se libera para el siguiente.',
   ].join('\n\n');
@@ -190,6 +190,31 @@ async function reservaVigente(wa) {
     return null;
   }
 }
+// Después de pagar, la persona le manda LISTO al bot (la página de compra se lo pide). Eso abre
+// la ventana de 24 horas de WhatsApp para avisarle cuando el equipo confirma o rechaza el pago
+// (notificar_compra en la base). compra_listo busca su última compra con comprobante (48 h),
+// anota listo_at y dice en qué estado está. Null = no tiene una compra reciente.
+async function compraListo(wa) {
+  if (!SB_URL || !SB_KEY) return null;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/rpc/compra_listo`, {
+      method: 'POST',
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_grupo: Number(GRUPO_ID), p_wa: String(wa) }),
+    });
+    return r.ok ? await r.json() : null;
+  } catch (e) {
+    log({ type: 'compra_listo_error', wa, error: String(e?.message || e) });
+    return null;
+  }
+}
+const ES_LISTO = /(^|[^a-záéíóúñ])(list[oa]|ya pagu[eé]|ya transfer[ií]|ya (te )?(lo )?mand[eé]|ya (est[aá]|hice))(?![a-záéíóúñ])/i;
+function msgCompra(c) {
+  if (c.estado === 'pagado') return `Tu compra de ${c.prenda} ya está confirmada ✅`;
+  if (c.estado === 'cancelado') return `No pudimos validar el pago de ${c.prenda}, así que la compra quedó cancelada.${c.soporte ? ` Si ya transferiste, escribinos a https://wa.me/${c.soporte} y lo resolvemos.` : ''}`;
+  return `Recibimos tu compra de ${c.prenda}. La estamos revisando y te avisamos por acá cuando quede confirmada 🙌`;
+}
+
 async function pausaHumanaHasta(wa) {
   try {
     const data = await listMensajesCache();
@@ -842,6 +867,17 @@ async function handle(payload, textOverride) {
     await send(wa, `Claro! Escribinos por acá y te atiende alguien del equipo 🙌 ${j.link || HUMANO_LINK}`);
     return { ok: true };
   }
+  // LISTO después de pagar (solo el bot del grupo con pedidos desde el grupo). Contesta una vez
+  // por compra, o cada vez que diga "listo"; si tiene una reserva nueva abierta, solo con "listo".
+  if (SOLO_COMPRAS && text) {
+    const c = await compraListo(wa);
+    const esListo = ES_LISTO.test(text);
+    if (c && (esListo || (!c.ya_respondido && st.step !== 'link_enviado'))) {
+      log({ type: 'compra_listo', wa, compra: c.compra, estado: c.estado, ya_respondido: c.ya_respondido });
+      await send(wa, msgCompra(c));
+      return { ok: true, compra_listo: c.estado };
+    }
+  }
   if (wantsCancel(text)) {
     return replyCancelar(wa, state, st);
   }
@@ -1018,7 +1054,7 @@ async function handle(payload, textOverride) {
         : `$${money(j.precio)}.`;
       // Solo el código (no el nombre completo) para que el mensaje no quede largo.
       const codReserva = String(j.sku || codigo).toUpperCase();
-      await send(wa, `Listo, reservé el ${codReserva}! 🛍️ ${precioTxt}\n\nTe lo dejo reservado por ${j.minutos || 15} minutos ⏳\n\n${askDeliveryText(j)}`);
+      await send(wa, `Listo, reservé el ${codReserva}! 🛍️ ${precioTxt}\n\nTe lo dejo reservado por ${j.texto || `${j.minutos || 15} minutos`} ⏳\n\n${askDeliveryText(j)}`);
     } else if (j.reason === 'reservado') {
       if (j.mensaje_fila) await send(wa, j.mensaje_fila);
       else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
