@@ -17,6 +17,8 @@ PID_BRIDGE = STATE / 'kapso-bridge.pid'
 PID_TUNNEL = STATE / 'cloudflared.pid'
 TUNNEL_LOG = STATE / 'cloudflared.log'
 PUBLIC_URL_FILE = STATE / 'public-url.txt'
+# Última URL que Kapso aceptó. Si no coincide con public-url.txt, se reintenta cada corrida.
+WEBHOOK_URL_FILE = STATE / 'webhook-url.txt'
 PHONE_NUMBER_ID = '1329393980246912'
 WEBHOOK_ID = 'bf68e5d3-c4c3-4aef-88c5-f1631db65f80'
 PORT = '8787'
@@ -118,7 +120,19 @@ env=load_env()
 if start_bridge(env): changed.append('bridge restarted')
 new_url=start_tunnel()
 if new_url:
-    update_webhook(new_url, env)
-    changed.append('tunnel updated '+new_url)
+    changed.append('tunnel restarted '+new_url)
+# El webhook se actualiza aparte del túnel: antes, si el update fallaba una vez, el túnel ya
+# estaba sano y no se reintentaba nunca (2026-11-23: el bot del grupo 1 dejó de recibir
+# mensajes porque Kapso seguía mandando a la URL vieja).
+url = PUBLIC_URL_FILE.read_text().strip() if PUBLIC_URL_FILE.exists() else ''
+avisado = WEBHOOK_URL_FILE.read_text().strip() if WEBHOOK_URL_FILE.exists() else ''
+if url and url != avisado:
+    try:
+        update_webhook(url, env)
+        WEBHOOK_URL_FILE.write_text(url)
+        changed.append('webhook updated '+url)
+    except Exception as e:
+        detalle = getattr(e, 'stderr', '') or ''
+        changed.append(f'webhook update FAILED ({type(e).__name__}) {str(detalle)[-300:]}')
 if changed:
     print(f'LO QUIERO watchdog ({ENV_FILE}): ' + '; '.join(changed))
