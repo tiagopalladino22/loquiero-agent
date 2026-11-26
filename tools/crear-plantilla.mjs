@@ -35,7 +35,7 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista", "compra_retiro", "reserva_recordatorio_fila", "reserva_recordatorio"]) {
+  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista", "compra_retiro", "reserva_recordatorio_fila", "reserva_recordatorio", "reserva_pendiente_fila", "reserva_pendiente"]) {
     const r = await fetch(`${url}?name=${name}`, { headers });
     console.log(name, r.status, await r.text());
   }
@@ -195,9 +195,27 @@ const recordatorio = {
     botonesRecordatorio,
   ],
 };
+// Versión llana del recordatorio (2026-11-26): las dos de arriba Meta las aprobó como MARKETING.
+// Si estas salen UTILITY, se cambian las claves de config a estos nombres.
+const pendienteFila = {
+  name: "reserva_pendiente_fila", language: "es_AR", category: "UTILITY",
+  components: [
+    { type: "BODY", text: "Tu reserva de {{1}} sigue a tu nombre. Para confirmarla, completá la compra desde el botón. Si no la vas a usar, tocá \"Libero\" y pasa a la siguiente persona de la lista.",
+      example: { body_text: [["A28 · Vestido negro (talle S)"]] } },
+    botonesRecordatorio,
+  ],
+};
+const pendiente = {
+  name: "reserva_pendiente", language: "es_AR", category: "UTILITY",
+  components: [
+    { type: "BODY", text: "Tu reserva de {{1}} sigue a tu nombre. Para confirmarla, completá la compra desde el botón. Si no la vas a usar, tocá \"Libero\".",
+      example: { body_text: [["A28 · Vestido negro (talle S)"]] } },
+    botonesRecordatorio,
+  ],
+};
 const i = process.argv.indexOf("--solo");
 const solo = i > 0 ? process.argv[i + 1].split(",") : null;
-for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista, compra, recordatorioFila, recordatorio].filter((x) => !solo || solo.includes(x.name))) {
+for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista, compra, recordatorioFila, recordatorio, pendienteFila, pendiente].filter((x) => !solo || solo.includes(x.name))) {
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
   console.log(plantilla.name, r.status, await r.text());
 }
