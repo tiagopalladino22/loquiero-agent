@@ -35,7 +35,7 @@ const url = `${KAPSO_BASE}/${KAPSO_VER}/${WABA}/message_templates`;
 const headers = { "X-API-Key": KEY, "Content-Type": "application/json" };
 
 if (process.argv.includes("--estado")) {
-  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista", "compra_retiro"]) {
+  for (const name of ["pedido_reservado", "pedido_en_fila", "aviso_codigo", "reserva_confirmada", "consulta_producto", "reserva_lista", "compra_retiro", "reserva_recordatorio_fila", "reserva_recordatorio"]) {
     const r = await fetch(`${url}?name=${name}`, { headers });
     console.log(name, r.status, await r.text());
   }
@@ -158,9 +158,46 @@ const compra = {
     },
   ],
 };
+// Recordatorio a las 2 h de reservar sin pagar (2026-11-26; tuganga-ops recordatorios_reserva(),
+// config plantilla_recordatorio_fila / plantilla_recordatorio). [Libero] es quick reply: el
+// payload liberar:<producto_id> lo pone la base al mandar y lo atiende kapso-bridge (botonLiberar).
+const botonesRecordatorio = {
+  type: "BUTTONS",
+  buttons: [
+    { type: "URL", text: "Completar compra", url: "https://loquiero.systeems.com/c/{{1}}",
+      example: ["https://loquiero.systeems.com/c/1ddbd4180d4542809305?wa=5491100000000"] },
+    { type: "QUICK_REPLY", text: "Libero" },
+  ],
+};
+const recordatorioFila = {
+  name: "reserva_recordatorio_fila",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [
+    {
+      type: "BODY",
+      text: "¡Hola! 😊 Tu pedido de {{1}} sigue reservado a tu nombre.\nHay otras personas en lista de espera por este producto. Si todavía lo querés, terminá la compra desde el botón. Si ya no te interesa, tocá \"Libero\" y se lo pasamos al siguiente 🙌\n¡Gracias!",
+      example: { body_text: [["A28 · Vestido negro (talle S)"]] },
+    },
+    botonesRecordatorio,
+  ],
+};
+const recordatorio = {
+  name: "reserva_recordatorio",
+  language: "es_AR",
+  category: "UTILITY",
+  components: [
+    {
+      type: "BODY",
+      text: "¡Hola! 😊 Tu pedido de {{1}} sigue reservado a tu nombre.\nSi todavía lo querés, terminá la compra desde el botón. Si ya no te interesa, tocá \"Libero\" así queda libre para otra persona 🙌\n¡Gracias!",
+      example: { body_text: [["A28 · Vestido negro (talle S)"]] },
+    },
+    botonesRecordatorio,
+  ],
+};
 const i = process.argv.indexOf("--solo");
 const solo = i > 0 ? process.argv[i + 1].split(",") : null;
-for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista, compra].filter((x) => !solo || solo.includes(x.name))) {
+for (const plantilla of [pedido, fila, aviso, reserva, consulta, lista, compra, recordatorioFila, recordatorio].filter((x) => !solo || solo.includes(x.name))) {
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plantilla) });
   console.log(plantilla.name, r.status, await r.text());
 }
