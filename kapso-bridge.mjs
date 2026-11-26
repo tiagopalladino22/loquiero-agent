@@ -696,7 +696,7 @@ async function replyCredito(wa, state, st) {
 }
 function wantsCancel(text) {
   const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  return /(no lo quiero|ya no lo quiero|no lo quiero mas|no lo voy a comprar|cancelar|cancelame|cancelo|cancela la compra|anular|anulame|dar de baja|me arrepenti|al final no|mejor no|dejalo|liberar|liberalo|liberame|soltalo|sacalo|borralo|daselo a otro|que se lo lleve otro|desisti|sacame de la fila|bajame de la lista|no me anotes|sacame de la espera)/.test(t);
+  return /(no lo quiero|ya no lo quiero|no lo quiero mas|no lo voy a comprar|cancelar|cancelame|cancelo|cancela la compra|anular|anulame|dar de baja|me arrepenti|al final no|mejor no|dejalo|liberar|libero|liberalo|liberame|soltalo|sacalo|borralo|daselo a otro|que se lo lleve otro|desisti|sacame de la fila|bajame de la lista|no me anotes|sacame de la espera)/.test(t);
 }
 // Detecta una consulta sobre la ficha del producto (material/composicion/tela/etc.) para
 // responderla con datos reales, sin dispararla como reserva.
@@ -816,6 +816,17 @@ async function handle(payload, textOverride) {
   if (textOverride != null) text = textOverride;
   log({ type: 'incoming', event, wa, text, hasMedia, batched: textOverride != null, payload });
   if (!wa) return { ok: false, reason: 'no_wa' };
+
+  // Botón "Libero" del recordatorio: anda aunque un humano haya tomado la conversación.
+  const liberarId = botonLiberar(payload);
+  if (liberarId) {
+    const j = await liberarPorBoton(liberarId, wa);
+    const msg = j.ok ? 'Listo, lo liberamos 🙌 ¡Gracias por avisar!'
+      : j.reason === 'no_reservado' ? 'Ese producto ya no estaba reservado a tu nombre 😊'
+      : 'Perdón, hubo un problema. El equipo te lo libera por privado 🙌';
+    await send(wa, msg);
+    return { ok: true, liberado: !!j.ok };
+  }
 
   // Handoff: si un humano ya contesto en esta conversacion, el bot no participa por 24h.
   const pausaHasta = await pausaHumanaHasta(wa);
@@ -1123,12 +1134,34 @@ function bufferText(wa, payload, text) {
   }, BATCH_MS);
 }
 
+// Botón "Libero" del recordatorio de reserva (plantilla con quick reply, payload
+// "liberar:<producto_id>", 2026-11-26): libera ESE producto, no la última reserva de la persona.
+function botonLiberar(payload) {
+  const m = payload?.message || payload?.data?.message || payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  const p = String(m?.button?.payload || m?.interactive?.button_reply?.id || '');
+  const x = /^liberar:([0-9a-f-]{36})$/i.exec(p);
+  return x ? x[1] : null;
+}
+
+async function liberarPorBoton(productoId, wa) {
+  if (!SB_URL || !SB_KEY) return { ok: false, reason: 'config' };
+  const r = await fetch(`${SB_URL}/rest/v1/rpc/liberar_por_boton`, {
+    method: 'POST',
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_producto: productoId, p_wa: _num(wa) }),
+  });
+  const j = r.ok ? await r.json().catch(() => null) : null;
+  log({ type: 'liberar_boton', wa, productoId, status: r.status, out: j });
+  return j || { ok: false, reason: 'error' };
+}
+
 function schedule(payload) {
   const info = extract(payload);
   const wa = info.wa || 'unknown';
   const id = messageIdFrom(payload) || mediaIdFrom(payload);
   if (_alreadySeen(id)) { log({ type: 'dup_skip', wa, id }); return; }
   if (info.hasMedia) { enqueue(wa, payload); return; } // media (comprobante): procesar ya
+  if (botonLiberar(payload)) { enqueue(wa, payload); return; } // botón Libero: sin juntar con otros textos
   bufferText(wa, payload, info.text);
 }
 
