@@ -1420,3 +1420,22 @@ const server = http.createServer(async (req, res) => {
   });
 });
 server.listen(PORT, () => log({ type: 'start', port: PORT, phoneNumberId: PHONE_NUMBER_ID, grupo: GRUPO_ID }));
+
+// Envío rápido de la cola de notificaciones (2026-11-27): el link después del "quiero" en el grupo
+// tardaba 66 s de mediana (hasta 2 min) esperando el cron de 1 minuto. Con LOQUIERO_NOTIF_RAPIDO=1
+// el bot drena la cola cada 3 s. El cron sigue de respaldo; tomar_notificaciones (en la base)
+// garantiza que cada mensaje lo mande uno solo.
+if (process.env.LOQUIERO_NOTIF_RAPIDO === '1') {
+  const { drenar } = await import('./tools/notificar.mjs');
+  let drenando = false;
+  setInterval(async () => {
+    if (drenando) return;
+    drenando = true;
+    try {
+      const r = await drenar();
+      if (r.enviadas || r.fallidas) log({ type: 'notif_rapido', ...r });
+    } catch (e) {
+      log({ type: 'notif_rapido_error', error: String(e?.message || e).slice(0, 200) });
+    } finally { drenando = false; }
+  }, 3000);
+}

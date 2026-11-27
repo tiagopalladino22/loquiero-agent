@@ -29,10 +29,6 @@ const KAPSO_KEY = process.env.KAPSO_API_KEY || "";
 function log(o) {
   process.stdout.write((typeof o === "string" ? o : JSON.stringify(o)) + "\n");
 }
-if (!SB || !KEY) {
-  log({ ok: false, error: "Faltan LOQUIERO_SUPABASE_URL / _SERVICE_ROLE_KEY" });
-  process.exit(0);
-}
 
 const sbHeaders = { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" };
 
@@ -67,19 +63,21 @@ async function sendTemplate(to, plantilla) {
   return t;
 }
 
-async function main() {
-  // 1 + 2: respaldo de pg_cron (idempotente)
-  let liberadas = 0, confirmadas = 0;
-  // Son de toda la base: las corre solo la copia del grupo 1.
-  if (GRUPO_ID === 1) {
-    try { liberadas = await rpc("liberar_reservas_vencidas"); } catch (e) { log(`warn liberar: ${e.message}`); }
-    try { confirmadas = await rpc("confirmar_recompensas"); } catch (e) { log(`warn confirmar: ${e.message}`); }
+// 3: drenar la cola. Cada notificación se TOMA antes de mandarla (tomar_notificaciones la pasa a
+// 'enviando' con skip locked): el bot drena cada pocos segundos y el cron de respaldo cada minuto,
+// y nunca mandan la misma dos veces (2026-11-27, scripts/migrate-tomar-notificaciones.mjs del panel).
+// La usa también kapso-bridge.mjs (LOQUIERO_NOTIF_RAPIDO=1).
+export async function drenar() {
+  if (!SB || !KEY) return { enviadas: 0, fallidas: 0 };
+  let pend;
+  if (DRY) {
+    const q = `${SB}/rest/v1/notificaciones?estado=eq.pendiente&grupo_id=eq.${GRUPO_ID}&intentos=lt.5&order=created_at.asc&limit=50`;
+    const res = await fetch(q, { headers: sbHeaders });
+    pend = res.ok ? await res.json() : [];
+  } else {
+    pend = await rpc("tomar_notificaciones", { p_grupo: GRUPO_ID, p_limite: 20 });
+    if (!Array.isArray(pend)) pend = [];
   }
-
-  // 3: drenar pendientes
-  const q = `${SB}/rest/v1/notificaciones?estado=eq.pendiente&grupo_id=eq.${GRUPO_ID}&intentos=lt.5&order=created_at.asc&limit=50`;
-  const res = await fetch(q, { headers: sbHeaders });
-  const pend = res.ok ? await res.json() : [];
 
   let enviadas = 0, fallidas = 0;
   for (const n of pend) {
@@ -93,15 +91,36 @@ async function main() {
     try {
       if (n.plantilla) await sendTemplate(to, n.plantilla);
       else await sendText(to, n.mensaje);
-      await rpc("marcar_notificacion", { p_id: n.id, p_estado: "enviado", p_error: null });
-      enviadas++;
     } catch (e) {
       await rpc("marcar_notificacion", { p_id: n.id, p_estado: "error", p_error: String(e.message || e).slice(0, 500) });
       fallidas++;
+      continue;
     }
+    // Ya salió: si marcar falla, se reintenta; nunca se vuelve a mandar (queda en 'enviando').
+    for (let i = 0; i < 3; i++) {
+      try { await rpc("marcar_notificacion", { p_id: n.id, p_estado: "enviado", p_error: null }); break; }
+      catch (e) { if (i === 2) log(`warn marcar ${n.id}: ${e.message}`); else await new Promise((r) => setTimeout(r, 1000)); }
+    }
+    enviadas++;
   }
+  return { enviadas, fallidas };
+}
+
+async function main() {
+  if (!SB || !KEY) { log({ ok: false, error: "Faltan LOQUIERO_SUPABASE_URL / _SERVICE_ROLE_KEY" }); return; }
+  // 1 + 2: respaldo de pg_cron (idempotente)
+  let liberadas = 0, confirmadas = 0;
+  // Son de toda la base: las corre solo la copia del grupo 1.
+  if (GRUPO_ID === 1) {
+    try { liberadas = await rpc("liberar_reservas_vencidas"); } catch (e) { log(`warn liberar: ${e.message}`); }
+    try { confirmadas = await rpc("confirmar_recompensas"); } catch (e) { log(`warn confirmar: ${e.message}`); }
+  }
+
+  const { enviadas, fallidas } = await drenar();
 
   log(`notificar: ${liberadas} liberada(s), ${confirmadas} recompensa(s) confirmada(s), ${enviadas} enviada(s)${DRY ? " (dry)" : ""}, ${fallidas} fallida(s).`);
 }
 
-main().catch((e) => { log({ ok: false, error: String(e.message || e) }); process.exit(0); });
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { log({ ok: false, error: String(e.message || e) }); process.exit(0); });
+}
