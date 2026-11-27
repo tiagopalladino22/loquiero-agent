@@ -851,6 +851,11 @@ async function handle(payload, textOverride) {
     // Modo link: el comprobante se carga en la pagina, no por el chat.
     if (linkMode) {
       st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
+      // Grupo con pedidos desde el grupo: el comprobante también vale por acá.
+      if (SOLO_COMPRAS && PANEL_TOKEN) {
+        const url = await subirImagenComprobante(payload, wa);
+        if (url) return responderCompra(wa, await panelCompra({ accion: 'recibir', wa, comprobanteUrl: url }), true);
+      }
       const link = st.step === 'link_enviado' ? checkoutLink(st.producto?.checkout_token, wa) : null;
       await send(wa, link ? `El comprobante se carga en la página del producto 🙌\n\n${link}` : msgLinkInfo(st, wa));
       return { ok: true, media_link_mode: true };
@@ -869,6 +874,12 @@ async function handle(payload, textOverride) {
     log({ type: 'media_no_comprobante', wa, step: st.step || null });
     await send(wa, 'Vi tu imagen 🙌 Si querés reservar una prenda, escribime “LO QUIERO” y el código. Y si es el comprobante de una compra, mandámelo cuando te haya pasado el CVU para pagar. ¿Te ayudo con algo?');
     return { ok: true, media_ignored: true };
+  }
+  // Respuesta a una pregunta del comprobante por WhatsApp (cuál producto, punto, nombre).
+  if (SOLO_COMPRAS && PANEL_TOKEN && String(st.step || '').startsWith('cb_')) {
+    const h = await seguirCompraBot(wa, text, payload, st);
+    if (h) return h;
+    st.step = null; delete st.cb; state[wa] = st; saveState(state);
   }
   // Historial para el cerebro: guardamos cada mensaje de texto del cliente (para que el LLM
   // entienda el hilo en los follow-ups). Los procesos por wa estan serializados, no hay race.
@@ -1155,6 +1166,151 @@ async function liberarPorBoton(productoId, wa) {
   return j || { ok: false, reason: 'error' };
 }
 
+// ── Comprobante por WhatsApp (2026-11-27, pedido de Tiago) ─────────────────────────────────
+// En el grupo con pedidos desde el grupo (SOLO_COMPRAS + modo link), si la persona manda el
+// comprobante por acá en vez de subirlo en la página, el bot lo adjunta a su reserva y el panel
+// cierra la compra igual que la página (tuganga-ops src/lib/compra-bot.ts, POST /api/bot/compra).
+// Si falta algo lo pregunta de a una cosa: cuál producto (botones), dónde retira (botones) y
+// nombre y apellido (texto). Estado en st.step: cb_elegir | cb_punto | cb_nombre, datos en st.cb.
+const PANEL_TOKEN = process.env.LOQUIERO_PANEL_TOKEN || '';
+const CB_KAPSO_KEY = process.env.KAPSO_API_KEY || '';
+const CB_KAPSO_BASE = (process.env.KAPSO_CLOUD_BASE || 'https://api.kapso.ai/meta/whatsapp').replace(/\/+$/, '');
+const CB_KAPSO_VER = process.env.KAPSO_API_VERSION || 'v21.0';
+const cbArs = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+
+function botonId(payload) {
+  const m = payload?.message || payload?.data?.message || payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  return String(m?.interactive?.button_reply?.id || m?.button?.payload || '');
+}
+
+// Mensaje con hasta 3 botones (respuesta rápida). Si falla, manda el texto con las opciones.
+async function sendBotones(to, body, botones) {
+  try {
+    const r = await fetch(`${CB_KAPSO_BASE}/${CB_KAPSO_VER}/${PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: { 'X-API-Key': CB_KAPSO_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', recipient_type: 'individual', to: String(to), type: 'interactive',
+        interactive: { type: 'button', body: { text: body }, action: { buttons: botones.slice(0, 3).map((b) => ({ type: 'reply', reply: { id: b.id, title: b.title.slice(0, 20) } })) } },
+      }),
+    });
+    const j = await r.json().catch(() => null);
+    const id = j?.messages?.[0]?.id;
+    if (id) recordBotSent(id);
+    log({ type: 'send_botones', to, body, botones, status: r.status, out: JSON.stringify(j).slice(0, 500) });
+    if (r.ok) return;
+  } catch (e) { log({ type: 'send_botones_error', to, error: String(e?.message || e) }); }
+  await send(to, `${body}\n\n${botones.map((b, i) => `${i + 1}. ${b.title}`).join('\n')}`);
+}
+
+async function panelCompra(body) {
+  try {
+    const r = await fetch(`${APP_URL}/api/bot/compra`, {
+      method: 'POST',
+      headers: { 'x-api-token': PANEL_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grupo: GRUPO_ID, ...body }),
+    });
+    const j = await r.json().catch(() => null);
+    log({ type: 'panel_compra', body, status: r.status, out: j });
+    return j || { estado: 'error', error: `http_${r.status}` };
+  } catch (e) {
+    log({ type: 'panel_compra_error', body, error: String(e?.message || e) });
+    return { estado: 'error', error: 'red' };
+  }
+}
+
+// Baja la imagen de Kapso y la sube al bucket de comprobantes. Devuelve la URL pública.
+async function subirImagenComprobante(payload, wa) {
+  const mediaId = mediaIdFrom(payload);
+  if (!mediaId) return null;
+  try {
+    mkdirSync('/opt/data/loquiero-agent/receipts', { recursive: true });
+    const imgPath = `/opt/data/loquiero-agent/receipts/${wa}-${mediaId}.jpg`;
+    const dl = await sh('node', ['/opt/data/loquiero-agent/tools/kapso-download-media.mjs', mediaId, imgPath, PHONE_NUMBER_ID]);
+    log({ type: 'download_receipt', mediaId, wa, code: dl.code, err: dl.err.slice(0, 500) });
+    return dl.code === 0 ? await uploadComprobante(imgPath, wa, mediaId) : null;
+  } catch (e) {
+    log({ type: 'receipt_process_error', wa, error: String(e?.stack || e) });
+    return null;
+  }
+}
+
+// Contesta según lo que devolvió el panel. desdeImagen: recién llegó el comprobante.
+async function responderCompra(wa, r, desdeImagen) {
+  const state = loadState();
+  const st = state[wa] || {};
+  const recibido = (sku) => (desdeImagen ? `Recibí tu comprobante${sku ? ` de ${sku}` : ''} 🙌 ` : '');
+  if (r.estado === 'cerrada') {
+    st.step = 'compra_cerrada'; delete st.cb; state[wa] = st; saveState(state);
+    await send(wa, `¡Listo! Recibimos tu comprobante de ${r.sku} 🙌`);
+    return { ok: true, compra_bot: 'cerrada' };
+  }
+  if (r.estado === 'elegir') {
+    st.step = 'cb_elegir'; st.cb = { opciones: r.productos.map((x) => x.sku) }; state[wa] = st; saveState(state);
+    const lista = r.productos.map((x) => `• ${x.sku} · ${x.descripcion} · ${cbArs(x.monto)}`).join('\n');
+    const body = `${recibido()}¿De cuál producto es?\n\n${lista}`;
+    if (r.productos.length <= 3) await sendBotones(wa, body, r.productos.map((x) => ({ id: `cbs:${x.sku}`, title: `${x.sku} · ${cbArs(x.monto)}` })));
+    else await send(wa, `${body}\n\nRespondeme con el código (por ejemplo ${r.productos[0].sku}).`);
+    return { ok: true, compra_bot: 'elegir' };
+  }
+  if (r.estado === 'falta' && r.falta === 'punto') {
+    st.step = 'cb_punto'; st.cb = { sku: r.sku, puntos: r.puntos }; state[wa] = st; saveState(state);
+    const body = `${recibido(r.sku)}¿Dónde lo retirás?`;
+    if (r.puntos.length <= 3) await sendBotones(wa, body, r.puntos.map((p, i) => ({ id: `cbp:${i}`, title: p })));
+    else await send(wa, `${body}\n\n${r.puntos.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nRespondeme con el número.`);
+    return { ok: true, compra_bot: 'falta_punto' };
+  }
+  if (r.estado === 'falta' && r.falta === 'nombre') {
+    st.step = 'cb_nombre'; st.cb = { sku: r.sku }; state[wa] = st; saveState(state);
+    await send(wa, `${recibido(r.sku)}¿A nombre de quién lo retirás? Mandame nombre y apellido.`);
+    return { ok: true, compra_bot: 'falta_nombre' };
+  }
+  if (r.estado === 'sin_reserva') {
+    delete st.cb; if (String(st.step || '').startsWith('cb_')) st.step = null; state[wa] = st; saveState(state);
+    await send(wa, msgLinkInfo(st, wa));
+    return { ok: true, compra_bot: 'sin_reserva' };
+  }
+  // Error: el comprobante ya quedó guardado (o no se pudo bajar); lo ve el equipo.
+  delete st.cb; if (String(st.step || '').startsWith('cb_')) st.step = null; state[wa] = st; saveState(state);
+  await send(wa, 'Recibí tu comprobante 🙌 El equipo lo revisa y te confirma por acá.');
+  return { ok: true, compra_bot: 'error', error: r.error };
+}
+
+// Respuesta a una pregunta del bot (cb_*). Devuelve null si el mensaje no es una respuesta
+// (ej "cancelo" o "humano"): sigue el flujo de siempre.
+async function seguirCompraBot(wa, text, payload, st) {
+  const id = botonId(payload);
+  const t = String(text || '').trim();
+  const cb = st.cb || {};
+  if (!id && (wantsCancel(t) || wantsHuman(t))) return null;
+  if (st.step === 'cb_elegir') {
+    const sku = id.startsWith('cbs:') ? id.slice(4) : (cb.opciones || []).find((x) => new RegExp(`\\b${x}\\b`, 'i').test(t));
+    if (!sku) { await send(wa, `¿De cuál producto es el comprobante? Respondeme con el código (por ejemplo ${(cb.opciones || [])[0] || 'I357'}).`); return { ok: true, compra_bot: 'repregunta' }; }
+    return responderCompra(wa, await panelCompra({ accion: 'datos', wa, sku }), false);
+  }
+  if (st.step === 'cb_punto') {
+    const puntos = cb.puntos || [];
+    let punto = id.startsWith('cbp:') ? puntos[Number(id.slice(4))] : null;
+    if (!punto) {
+      const n = /^\s*(\d)\s*$/.exec(t);
+      const sin = (x) => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      punto = n ? puntos[Number(n[1]) - 1] : puntos.find((p) => sin(t).includes(sin(p).split(' ')[0]) || sin(t).includes(sin(p)));
+    }
+    if (!punto) {
+      await sendBotones(wa, '¿Dónde lo retirás?', puntos.map((p, i) => ({ id: `cbp:${i}`, title: p })));
+      return { ok: true, compra_bot: 'repregunta' };
+    }
+    return responderCompra(wa, await panelCompra({ accion: 'datos', wa, sku: cb.sku, punto }), false);
+  }
+  if (st.step === 'cb_nombre') {
+    const ws = t.replace(/[^\p{L}\s'-]/gu, ' ').trim().split(/\s+/).filter((w) => w.length > 1);
+    if (ws.length < 2) { await send(wa, 'Mandame nombre y apellido, así lo retirás sin problema 🙌'); return { ok: true, compra_bot: 'repregunta' }; }
+    const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    return responderCompra(wa, await panelCompra({ accion: 'datos', wa, sku: cb.sku, nombre: cap(ws[0]), apellido: ws.slice(1).map(cap).join(' ') }), false);
+  }
+  return null;
+}
+
 function schedule(payload) {
   const info = extract(payload);
   const wa = info.wa || 'unknown';
@@ -1162,6 +1318,7 @@ function schedule(payload) {
   if (_alreadySeen(id)) { log({ type: 'dup_skip', wa, id }); return; }
   if (info.hasMedia) { enqueue(wa, payload); return; } // media (comprobante): procesar ya
   if (botonLiberar(payload)) { enqueue(wa, payload); return; } // botón Libero: sin juntar con otros textos
+  if (/^cb[ps]:/.test(botonId(payload))) { enqueue(wa, payload); return; } // botones del comprobante por WhatsApp
   bufferText(wa, payload, info.text);
 }
 
