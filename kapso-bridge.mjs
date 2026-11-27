@@ -87,13 +87,16 @@ function codigoIntencionCompra(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
   const t = norm(raw); // minusculas, sin tildes, sin puntuacion
-  const codes = [...raw.toUpperCase().matchAll(/\b([A-Z]{1,4})\s?(\d{1,4})\b/g)].map((m) => m[1] + m[2]);
+  // "Quiero | 11" (2026-11-27, grupo 2): la barra es una I mal tipeada.
+  const codes = [...raw.replace(/\|\s?(\d{1,4})\b/g, 'I$1').toUpperCase().matchAll(/\b([A-Z]{1,4})\s?(\d{1,4})\b/g)].map((m) => m[1] + m[2]);
   if (!codes.length) return null;
   // solo el codigo (con o sin "el/la", saludo o signos)
   if (/^(?:hola|holis|buenas|buen dia|buenas tardes|buenas noches)?\s*(?:el|la)?\s*[a-z]{1,4}\s?\d{1,4}$/.test(t)) return codes[0];
   const info = /\b(saber|material|composicion|tela|talle|talles|medida|medidas|mide|cuanto|cuanta|precio|sale|vale|cuesta|color|colores|foto|fotos|disponible|queda|quedan|hay|stock|cuando|donde|como|que es|sigue|todavia)\b/;
   const intent = /\b(quiero|loquiero|reserv\w*|compr\w*|interes\w*|gusta\w*|encanta\w*|dame|damelo|llevo|quedo|tomo|agarro|pido|dale|apart\w*|guard\w*|separ\w*|mio|mia|va)\b/;
   if (intent.test(t) && !info.test(t)) return codes[0];
+  // Grupo 2: "Quiero I5, ¿tenés las medidas?" reserva igual y la pregunta se contesta después.
+  if (SOLO_COMPRAS && /\b(quiero|loquiero)\b/.test(t)) return codes[0];
   return null;
 }
 
@@ -829,7 +832,11 @@ async function handle(payload, textOverride) {
   }
 
   // Handoff: si un humano ya contesto en esta conversacion, el bot no participa por 24h.
-  const pausaHasta = await pausaHumanaHasta(wa);
+  // Grupo 2: "libero", el comprobante y las respuestas a lo que preguntó el bot se atienden
+  // aunque alguien del equipo esté en la charla (2026-11-27: un "Libero" quedó sin liberar).
+  const stPrevio = loadState()[wa] || {};
+  const saltaPausa = SOLO_COMPRAS && (hasMedia || wantsCancel(text) || String(stPrevio.step || '').startsWith('cb_'));
+  const pausaHasta = saltaPausa ? null : await pausaHumanaHasta(wa);
   if (pausaHasta && Date.now() < pausaHasta) {
     log({ type: 'human_paused', wa, until: new Date(pausaHasta).toISOString() });
     return { ok: true, human_paused: true };
@@ -851,6 +858,9 @@ async function handle(payload, textOverride) {
     // Modo link: el comprobante se carga en la pagina, no por el chat.
     if (linkMode) {
       st.lastMediaId = mediaId || null; state[wa] = st; saveState(state);
+      // Una publicación del grupo pegada como imagen ("quiero este"): es un pedido, no un comprobante.
+      const skuPub = SOLO_COMPRAS ? skuDePublicacion(text) : null;
+      if (skuPub) return reservarYResponder(skuPub, wa, state, st);
       // Grupo con pedidos desde el grupo: el comprobante también vale por acá.
       if (SOLO_COMPRAS && PANEL_TOKEN) {
         const url = await subirImagenComprobante(payload, wa);
@@ -894,7 +904,10 @@ async function handle(payload, textOverride) {
   if (SOLO_COMPRAS && text) {
     const c = await compraListo(wa);
     const esListo = ES_LISTO.test(text);
-    if (c && (esListo || (!c.ya_respondido && st.step !== 'link_enviado'))) {
+    // Grupo 2: solo si habla del pago ("listo", "ya pagué"); lo demás (ej "Cande, ¿lo llevás al
+    // cole?") no recibe "tu compra ya está confirmada" (2026-11-27).
+    const hablaDelPago = esListo || /\b(pag[ueé]|pago|transfer\w*|comprobante|confirm\w*)\b/i.test(text);
+    if (c && hablaDelPago && (esListo || (!c.ya_respondido && st.step !== 'link_enviado'))) {
       log({ type: 'compra_listo', wa, compra: c.compra, estado: c.estado, ya_respondido: c.ya_respondido });
       await send(wa, msgCompra(c));
       return { ok: true, compra_listo: c.estado };
@@ -965,25 +978,15 @@ async function handle(payload, textOverride) {
   if (linkMode) {
     const cod = codigoIntencionCompra(text);
     if (cod) {
-      const j = await reservar(cod, wa);
-      if (j.ok) {
-        // Si ya le habiamos mandado el link de este producto y sigue siendo suyo, solo se lo
-        // repetimos (la reserva no se extiende). Si viene de la fila, mensaje completo.
-        const repetir = st.step === 'link_enviado' && st.lastCodigo === cod && !j.confirmada_de_fila;
-        st.step = 'link_enviado'; st.lastCodigo = cod; st.producto = j; state[wa] = st; saveState(state);
-        await send(wa, repetir
-          ? `Sí, sigue reservado para vos. Acá está el link:\n\n${checkoutLink(j.checkout_token, wa)}`
-          : msgLinkReserva(j, wa));
-      } else if (j.reason === 'reservado') {
-        if (j.mensaje_fila) await send(wa, j.mensaje_fila);
-        else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
-        else await send(wa, 'Uy, justo lo reservó otra persona 😕 Si se libera te aviso al toque.');
-      }
-      else if (j.reason === 'vendido') await send(wa, 'Ese ya se vendió 😔 pero subimos cosas nuevas seguido.');
-      else if (j.reason === 'no_existe') await send(wa, 'No encontré ese código, ¿me lo repetís?');
-      else if (j.reason === 'no_disponible') await send(wa, 'Ese todavía no está disponible para reservar.');
-      else await send(wa, 'Perdón, hubo un problema. Ya nos fijamos y te confirmamos.');
-      return { ok: true, link_mode: true };
+      const out = await reservarYResponder(cod, wa, state, st);
+      // "Quiero I5, ¿tenés las medidas?": después de reservar, la pregunta.
+      if (SOLO_COMPRAS && PANEL_TOKEN && /\?|medida|talle|material|tela|mide/i.test(text)) await responderConsulta(wa, text, loadState()[wa] || st);
+      return out;
+    }
+    if (SOLO_COMPRAS && PANEL_TOKEN) {
+      if (esGracias(text)) { await send(wa, '¡Gracias! 🙌'); return { ok: true, gracias: true }; }
+      const h = await responderConsulta(wa, text, st);
+      if (h) return h;
     }
     await send(wa, msgLinkInfo(st, wa));
     return { ok: true, link_mode: true, info: true };
@@ -1309,6 +1312,81 @@ async function seguirCompraBot(wa, text, payload, st) {
     return responderCompra(wa, await panelCompra({ accion: 'datos', wa, sku: cb.sku, nombre: cap(ws[0]), apellido: ws.slice(1).map(cap).join(' ') }), false);
   }
   return null;
+}
+
+// ── Charlas por privado del grupo 2 (2026-11-27, análisis de las 38 charlas) ─────────────────
+// Antes todo lo que no era pedido recibía "Toda la info está en la página". Ahora:
+//   gracias / ok → "¡Gracias! 🙌"
+//   preguntas sobre su producto o su retiro → el panel contesta con los datos del producto
+//     (POST /api/bot/compra accion consulta); si no alcanzan, o es un reclamo, pasa a una persona
+//   "¿se puede reservar por privado?" → sí
+//   "pasame un link nuevo" → el link vigente, o lo vuelve a reservar si sigue libre
+const ES_GRACIAS = /^(?:(?:muchas|mil)?\s*gracias+|grac|ok+(?:a|i|is|ey)?|oki+|okey|dale|genial|perfecto|buen[ií]simo|b[aá]rbaro|entendido|joya|listo gracias|👍|🙏|🫶|❤️|🙌|😊|🥰|💚|\s|!|\.)+$/i;
+function esGracias(text) {
+  const t = String(text || '').trim().replace(/[\u{1F3FB}-\u{1F3FF}‍️]/gu, '');
+  return !!t && t.split(/\s+/).length <= 6 && ES_GRACIAS.test(t);
+}
+const MSG_HUMANO = 'Te paso con alguien del equipo, te responde por acá 🙌';
+async function consultaPanel(wa, text) {
+  if (!PANEL_TOKEN) return { tipo: 'nada' };
+  const r = await panelCompra({ accion: 'consulta', wa, texto: String(text || '').slice(0, 500) });
+  return r && r.tipo ? r : { tipo: 'humano' };
+}
+// Respuesta a una consulta por privado (lo que antes era "Toda la info está en la página").
+async function responderConsulta(wa, text, st) {
+  const t = norm(text);
+  if (/(reserv\w*|ped\w*|comprar)\b.*\b(privado|por aca|aca)\b|\b(privado|por aca)\b.*\b(reserv\w*|ped\w*|comprar)/.test(t)) {
+    await send(wa, '¡Sí! Escribime QUIERO y el código acá y te paso el link 🙌');
+    return { ok: true, consulta: 'privado' };
+  }
+  if (/\blink\b.*\b(nuevo|otro|de nuevo|devuelta|de vuelta)\b|\b(nuevo|otro)\b.*\blink\b|no (me )?(abre|anda|carga) el link|sitio web no disponible/.test(t)) {
+    const vig = await reservaVigente(wa);
+    if (vig?.checkout_token) { await send(wa, `Acá está tu link:\n\n${checkoutLink(vig.checkout_token, wa)}`); return { ok: true, consulta: 'link' }; }
+    if (st.lastCodigo) return reservarYResponder(st.lastCodigo, wa, loadState(), st);
+  }
+  const r = await consultaPanel(wa, text);
+  if (r.tipo === 'respuesta' && r.texto) { await send(wa, r.texto); return { ok: true, consulta: 'respuesta' }; }
+  if (r.tipo === 'humano') { await send(wa, MSG_HUMANO); return { ok: true, consulta: 'humano' }; }
+  return null; // sin reserva ni compra: el mensaje de siempre
+}
+// SKU de una publicación del grupo pegada como imagen ("🛍️ *LO QUIERO*\n\nI37 · ...").
+function skuDePublicacion(caption) {
+  const m = /lo quiero[\s\S]{0,40}?\n\s*\n?\s*([A-Z]{1,3}\d{1,4})\s*·/i.exec(String(caption || ''));
+  return m ? m[1].toUpperCase() : null;
+}
+// ¿El código existe en otro grupo? (para no contestar "no encontré ese código" en loop)
+async function codigoDeOtroGrupo(cod) {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/productos?select=grupo_id&sku=ilike.${encodeURIComponent(cod)}&grupo_id=neq.${GRUPO_ID}&limit=1`, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+    const j = r.ok ? await r.json() : [];
+    return Array.isArray(j) && j.length > 0;
+  } catch { return false; }
+}
+
+// Reserva por código en modo link y contesta (link, fila, vendido...). Lo usan el pedido escrito,
+// la publicación pegada como imagen y "pasame un link nuevo".
+async function reservarYResponder(cod, wa, state, st) {
+    const j = await reservar(cod, wa);
+    if (j.ok) {
+      // Si ya le habiamos mandado el link de este producto y sigue siendo suyo, solo se lo
+      // repetimos (la reserva no se extiende). Si viene de la fila, mensaje completo.
+      const repetir = st.step === 'link_enviado' && st.lastCodigo === cod && !j.confirmada_de_fila;
+      st.step = 'link_enviado'; st.lastCodigo = cod; st.producto = j; state[wa] = st; saveState(state);
+      await send(wa, repetir
+        ? `Sí, sigue reservado para vos. Acá está el link:\n\n${checkoutLink(j.checkout_token, wa)}`
+        : msgLinkReserva(j, wa));
+    } else if (j.reason === 'reservado') {
+      if (j.mensaje_fila) await send(wa, j.mensaje_fila);
+      else if (Number(j.posicion) > 0) await send(wa, `Uy, justo lo reservó otra persona 😕 Te anoté en la fila, sos el N.º ${j.posicion}. Si se libera te aviso al toque.`);
+      else await send(wa, 'Uy, justo lo reservó otra persona 😕 Si se libera te aviso al toque.');
+    }
+    else if (j.reason === 'vendido') await send(wa, 'Ese ya se vendió 😔 pero subimos cosas nuevas seguido.');
+    else if (j.reason === 'no_existe') await send(wa, SOLO_COMPRAS && await codigoDeOtroGrupo(cod)
+      ? `El ${cod} es de otro grupo de LO QUIERO 🙌 Acá podés pedir lo que se publica en este grupo.`
+      : 'No encontré ese código, ¿me lo repetís?');
+    else if (j.reason === 'no_disponible') await send(wa, 'Ese todavía no está disponible para reservar.');
+    else await send(wa, 'Perdón, hubo un problema. Ya nos fijamos y te confirmamos.');
+  return { ok: true, link_mode: true };
 }
 
 function schedule(payload) {
